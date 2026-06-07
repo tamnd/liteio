@@ -59,8 +59,10 @@ func New(dir string) (*Local, error) {
 	return &Local{root: abs}, nil
 }
 
+// String returns the drive's root path, its stable identifier.
 func (l *Local) String() string { return l.root }
 
+// IsOnline reports whether the drive root is currently accessible.
 func (l *Local) IsOnline() bool {
 	_, err := os.Stat(l.root)
 	return err == nil
@@ -83,13 +85,17 @@ func (l *Local) objPath(volume, path string) (string, error) {
 		return "", err
 	}
 	clean := filepath.Clean(filepath.FromSlash(path))
-	if clean == ".." || clean == "." || filepath.IsAbs(clean) ||
+	if clean == "." {
+		return vp, nil // empty path means the volume root
+	}
+	if clean == ".." || filepath.IsAbs(clean) ||
 		strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
 		return "", storage.ErrPathEscapes
 	}
 	return filepath.Join(vp, clean), nil
 }
 
+// MakeVol implements storage.StorageAPI: it creates a volume directory.
 func (l *Local) MakeVol(_ context.Context, volume string) error {
 	vp, err := l.volPath(volume)
 	if err != nil {
@@ -105,6 +111,7 @@ func (l *Local) MakeVol(_ context.Context, volume string) error {
 	return syncDir(l.root)
 }
 
+// StatVol implements storage.StorageAPI: it reports a volume's existence and creation time.
 func (l *Local) StatVol(_ context.Context, volume string) (storage.VolInfo, error) {
 	vp, err := l.volPath(volume)
 	if err != nil {
@@ -123,6 +130,7 @@ func (l *Local) StatVol(_ context.Context, volume string) (storage.VolInfo, erro
 	return storage.VolInfo{Name: volume, Created: info.ModTime()}, nil
 }
 
+// ListVols implements storage.StorageAPI: it lists the drive's volumes.
 func (l *Local) ListVols(_ context.Context) ([]storage.VolInfo, error) {
 	entries, err := os.ReadDir(l.root)
 	if err != nil {
@@ -142,6 +150,7 @@ func (l *Local) ListVols(_ context.Context) ([]storage.VolInfo, error) {
 	return vols, nil
 }
 
+// DeleteVol implements storage.StorageAPI: it removes a volume.
 func (l *Local) DeleteVol(_ context.Context, volume string, force bool) error {
 	vp, err := l.volPath(volume)
 	if err != nil {
@@ -165,10 +174,12 @@ func (l *Local) DeleteVol(_ context.Context, volume string, force bool) error {
 	return syncDir(l.root)
 }
 
+// ReadMeta implements storage.StorageAPI: it reads an object's obj.meta bytes.
 func (l *Local) ReadMeta(ctx context.Context, volume, path string) ([]byte, error) {
 	return l.readWholeFile(ctx, volume, filepath.ToSlash(filepath.Join(path, metaFile)))
 }
 
+// WriteMeta implements storage.StorageAPI: it atomically writes an object's obj.meta.
 func (l *Local) WriteMeta(_ context.Context, volume, path string, data []byte) error {
 	full, err := l.objPath(volume, filepath.ToSlash(filepath.Join(path, metaFile)))
 	if err != nil {
@@ -198,6 +209,7 @@ func (l *Local) readWholeFile(_ context.Context, volume, path string) ([]byte, e
 	return data, nil
 }
 
+// CreateFile implements storage.StorageAPI: it streams a file to disk and fsyncs it.
 func (l *Local) CreateFile(ctx context.Context, volume, path string, size int64, r io.Reader) error {
 	full, err := l.objPath(volume, path)
 	if err != nil {
@@ -230,6 +242,7 @@ func (l *Local) CreateFile(ctx context.Context, volume, path string, size int64,
 	return syncDir(filepath.Dir(full))
 }
 
+// ReadFile implements storage.StorageAPI: it reads into buf at an offset.
 func (l *Local) ReadFile(ctx context.Context, volume, path string, offset int64, buf []byte) (int, error) {
 	rc, err := l.ReadFileStream(ctx, volume, path, offset, int64(len(buf)))
 	if err != nil {
@@ -239,6 +252,7 @@ func (l *Local) ReadFile(ctx context.Context, volume, path string, offset int64,
 	return io.ReadFull(rc, buf)
 }
 
+// ReadFileStream implements storage.StorageAPI: it returns a reader over a byte range.
 func (l *Local) ReadFileStream(_ context.Context, volume, path string, offset, length int64) (io.ReadCloser, error) {
 	full, err := l.objPath(volume, path)
 	if err != nil {
@@ -281,6 +295,7 @@ type limitedFile struct {
 func (lf *limitedFile) Read(p []byte) (int, error) { return lf.r.Read(p) }
 func (lf *limitedFile) Close() error               { return lf.f.Close() }
 
+// RenameData implements storage.StorageAPI: it commits a staged object directory into place.
 func (l *Local) RenameData(_ context.Context, volume, srcPath, dstPath string) error {
 	src, err := l.objPath(volume, srcPath)
 	if err != nil {
@@ -307,6 +322,7 @@ func (l *Local) RenameData(_ context.Context, volume, srcPath, dstPath string) e
 	return syncDir(filepath.Dir(dst))
 }
 
+// RenameFile implements storage.StorageAPI: it atomically renames a single file.
 func (l *Local) RenameFile(_ context.Context, srcVolume, srcPath, dstVolume, dstPath string) error {
 	src, err := l.objPath(srcVolume, srcPath)
 	if err != nil {
@@ -328,6 +344,7 @@ func (l *Local) RenameFile(_ context.Context, srcVolume, srcPath, dstVolume, dst
 	return syncDir(filepath.Dir(dst))
 }
 
+// Delete implements storage.StorageAPI: it removes a file or directory tree.
 func (l *Local) Delete(_ context.Context, volume, path string, recursive bool) error {
 	full, err := l.objPath(volume, path)
 	if err != nil {
@@ -351,6 +368,7 @@ func (l *Local) Delete(_ context.Context, volume, path string, recursive bool) e
 	return syncDir(filepath.Dir(full))
 }
 
+// StatFile implements storage.StorageAPI: it returns a single file's metadata.
 func (l *Local) StatFile(_ context.Context, volume, path string) (storage.FileStat, error) {
 	full, err := l.objPath(volume, path)
 	if err != nil {
@@ -371,6 +389,7 @@ func (l *Local) StatFile(_ context.Context, volume, path string) (storage.FileSt
 	}, nil
 }
 
+// ListDir implements storage.StorageAPI: it lists the immediate entries under a path.
 func (l *Local) ListDir(_ context.Context, volume, path string, count int) ([]string, error) {
 	full, err := l.objPath(volume, path)
 	if err != nil {
