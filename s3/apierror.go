@@ -50,6 +50,10 @@ var (
 	errInvalidArgument         = APIError{"InvalidArgument", "Invalid Argument.", http.StatusBadRequest}
 	errInvalidRange            = APIError{"InvalidRange", "The requested range is not satisfiable.", http.StatusRequestedRangeNotSatisfiable}
 	errPreconditionFailed      = APIError{"PreconditionFailed", "At least one of the preconditions you specified did not hold.", http.StatusPreconditionFailed}
+	errNoSuchUpload            = APIError{"NoSuchUpload", "The specified multipart upload does not exist. The upload ID may be invalid, or the upload may have been aborted or completed.", http.StatusNotFound}
+	errInvalidPart             = APIError{"InvalidPart", "One or more of the specified parts could not be found. The part may not have been uploaded, or the specified ETag may not match the part's ETag.", http.StatusBadRequest}
+	errInvalidPartOrder        = APIError{"InvalidPartOrder", "The list of parts was not in ascending order. Parts must be ordered by part number.", http.StatusBadRequest}
+	errEntityTooSmall          = APIError{"EntityTooSmall", "Your proposed upload is smaller than the minimum allowed object size. Each part but the last must be at least 5 MiB.", http.StatusBadRequest}
 	errInvalidRequest          = APIError{"InvalidRequest", "Invalid Request.", http.StatusBadRequest}
 	errMalformedXML            = APIError{"MalformedXML", "The XML you provided was not well-formed or did not validate against our published schema.", http.StatusBadRequest}
 	errMissingContentLength    = APIError{"MissingContentLength", "You must provide the Content-Length HTTP header.", http.StatusBadRequest}
@@ -83,6 +87,14 @@ func toAPIError(err error) APIError {
 		return errInvalidArgument
 	case errors.Is(err, object.ErrInvalidRange):
 		return errInvalidRange
+	case errors.Is(err, object.ErrNoSuchUpload):
+		return errNoSuchUpload
+	case errors.Is(err, object.ErrInvalidPart):
+		return errInvalidPart
+	case errors.Is(err, object.ErrInvalidPartOrder):
+		return errInvalidPartOrder
+	case errors.Is(err, object.ErrEntityTooSmall):
+		return errEntityTooSmall
 	case errors.Is(err, object.ErrNotImplemented):
 		return errNotImplemented
 	case errors.Is(err, object.ErrReadQuorum), errors.Is(err, object.ErrWriteQuorum):

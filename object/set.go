@@ -397,31 +397,37 @@ func (s *erasureSet) getObject(ctx context.Context, bucket, object string, opts 
 		return nil, err
 	}
 
-	shards := make([][]byte, n)
-	for d := range s.drives {
-		if !present[d] {
-			continue
-		}
-		fi := selected[d]
-		li := fi.Erasure.Index
-		if li < 0 || li >= n {
-			continue
-		}
-		shard, err := s.readShard(ctx, d, bucket, object, fi)
-		if err != nil {
-			continue // treated as missing; reconstruction covers it
-		}
-		if len(fi.Parts) == 1 && len(fi.Parts[0].Checksums) == 1 {
-			if !erasure.VerifyShard(shard, fi.Parts[0].Checksums[0]) {
-				continue // bitrot: drop this shard
+	// Decode each part independently and concatenate. A single PUT (inline or
+	// out-of-line) has exactly one part; a multipart object has one per uploaded
+	// part, each its own erasure stripe.
+	data := make([]byte, 0, rep.Size)
+	for pi, part := range rep.Parts {
+		shards := make([][]byte, n)
+		for d := range s.drives {
+			if !present[d] {
+				continue
 			}
+			fi := selected[d]
+			li := fi.Erasure.Index
+			if li < 0 || li >= n {
+				continue
+			}
+			shard, err := s.readPartShard(ctx, d, bucket, object, fi, part.Number)
+			if err != nil {
+				continue // treated as missing; reconstruction covers it
+			}
+			if pi < len(fi.Parts) && len(fi.Parts[pi].Checksums) == 1 {
+				if !erasure.VerifyShard(shard, fi.Parts[pi].Checksums[0]) {
+					continue // bitrot: drop this shard
+				}
+			}
+			shards[li] = shard
 		}
-		shards[li] = shard
-	}
-
-	data, err := erasure.DecodeData(coder, shards, int(rep.Size))
-	if err != nil {
-		return nil, ErrReadQuorum
+		partData, err := erasure.DecodeData(coder, shards, int(part.Size))
+		if err != nil {
+			return nil, ErrReadQuorum
+		}
+		data = append(data, partData...)
 	}
 
 	// A ranged read yields only the requested window; ObjectInfo still reports
@@ -440,12 +446,14 @@ func (s *erasureSet) getObject(ctx context.Context, bucket, object string, opts 
 	}, nil
 }
 
-// readShard returns drive d's shard bytes for version fi, inline or from disk.
-func (s *erasureSet) readShard(ctx context.Context, d int, bucket, object string, fi meta.FileInfo) ([]byte, error) {
+// readPartShard returns drive d's shard bytes for one part of version fi, inline
+// or from the part file in the version directory. Inline data only ever backs a
+// single-part object, so the part number is irrelevant there.
+func (s *erasureSet) readPartShard(ctx context.Context, d int, bucket, object string, fi meta.FileInfo, partNumber int) ([]byte, error) {
 	if fi.IsInline() {
 		return fi.InlineData, nil
 	}
-	partPath := path.Join(object, versionDir(fi.VersionID), "part.1")
+	partPath := path.Join(object, versionDir(fi.VersionID), partFile(partNumber))
 	rc, err := s.drives[d].ReadFileStream(ctx, bucket, partPath, 0, -1)
 	if err != nil {
 		return nil, err

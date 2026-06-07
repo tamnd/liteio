@@ -133,6 +133,8 @@ func (s *Server) serveBucket(w http.ResponseWriter, r *http.Request, requestID, 
 			s.getBucketLocation(w, r, requestID, bucket)
 		case q.Has("versioning"):
 			s.getBucketVersioning(w, r, requestID, bucket)
+		case q.Has("uploads"):
+			s.listMultipartUploads(w, r, requestID, bucket)
 		default:
 			s.listObjectsV2(w, r, requestID, bucket)
 		}
@@ -157,16 +159,40 @@ func (s *Server) serveBucket(w http.ResponseWriter, r *http.Request, requestID, 
 	}
 }
 
-// serveObject handles object-level requests.
+// serveObject handles object-level requests, including the multipart-upload
+// subresources keyed by the ?uploads / ?uploadId query parameters.
 func (s *Server) serveObject(w http.ResponseWriter, r *http.Request, requestID, bucket, object string) {
+	q := r.URL.Query()
+	uploadID := q.Get("uploadId")
 	switch r.Method {
 	case http.MethodPut:
+		if uploadID != "" && q.Has("partNumber") {
+			s.uploadPart(w, r, requestID, bucket, object, uploadID)
+			return
+		}
 		s.putObject(w, r, requestID, bucket, object)
 	case http.MethodGet:
+		if uploadID != "" {
+			s.listObjectParts(w, r, requestID, bucket, object, uploadID)
+			return
+		}
 		s.getObject(w, r, requestID, bucket, object)
 	case http.MethodHead:
 		s.headObject(w, r, requestID, bucket, object)
+	case http.MethodPost:
+		switch {
+		case q.Has("uploads"):
+			s.newMultipartUpload(w, r, requestID, bucket, object)
+		case uploadID != "":
+			s.completeMultipartUpload(w, r, requestID, bucket, object, uploadID)
+		default:
+			writeError(w, requestID, r.URL.Path, errMethodNotAllowed)
+		}
 	case http.MethodDelete:
+		if uploadID != "" {
+			s.abortMultipartUpload(w, r, requestID, bucket, object, uploadID)
+			return
+		}
 		s.deleteObject(w, r, requestID, bucket, object)
 	default:
 		writeError(w, requestID, r.URL.Path, errMethodNotAllowed)

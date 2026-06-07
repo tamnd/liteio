@@ -145,6 +145,58 @@ type ListObjectsV2Info struct {
 	NextContinuationToken string
 }
 
+// MultipartUpload identifies one in-progress multipart upload in a listing.
+type MultipartUpload struct {
+	Bucket    string
+	Object    string
+	UploadID  string
+	Initiated time.Time
+}
+
+// PartInfo describes one uploaded part as ListParts and CompleteMultipartUpload
+// report it.
+type PartInfo struct {
+	PartNumber   int
+	LastModified time.Time
+	ETag         string
+	Size         int64
+}
+
+// CompletePart is one entry of a CompleteMultipartUpload request: the part number
+// and the ETag the client received from UploadPart.
+type CompletePart struct {
+	PartNumber int
+	ETag       string
+}
+
+// ListPartsInfo is the result of ListObjectParts.
+type ListPartsInfo struct {
+	Bucket               string
+	Object               string
+	UploadID             string
+	PartNumberMarker     int
+	NextPartNumberMarker int
+	MaxParts             int
+	IsTruncated          bool
+	Parts                []PartInfo
+	UserDefined          map[string]string
+}
+
+// ListMultipartsInfo is the result of ListMultipartUploads.
+type ListMultipartsInfo struct {
+	Bucket             string
+	Prefix             string
+	Delimiter          string
+	KeyMarker          string
+	UploadIDMarker     string
+	NextKeyMarker      string
+	NextUploadIDMarker string
+	MaxUploads         int
+	IsTruncated        bool
+	Uploads            []MultipartUpload
+	CommonPrefixes     []string
+}
+
 // ObjectToDelete names one target of a batch delete.
 type ObjectToDelete struct {
 	Name      string
@@ -206,4 +258,12 @@ type ObjectLayer interface {
 
 	// listing
 	ListObjectsV2(ctx context.Context, bucket, prefix, token, startAfter, delim string, maxKeys int, fetchOwner bool) (ListObjectsV2Info, error)
+
+	// multipart upload
+	NewMultipartUpload(ctx context.Context, bucket, object string, opts ObjectOptions) (uploadID string, err error)
+	PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, r *PutReader, opts ObjectOptions) (PartInfo, error)
+	CompleteMultipartUpload(ctx context.Context, bucket, object, uploadID string, parts []CompletePart, opts ObjectOptions) (ObjectInfo, error)
+	AbortMultipartUpload(ctx context.Context, bucket, object, uploadID string, opts ObjectOptions) error
+	ListObjectParts(ctx context.Context, bucket, object, uploadID string, partNumberMarker, maxParts int, opts ObjectOptions) (ListPartsInfo, error)
+	ListMultipartUploads(ctx context.Context, bucket, prefix, keyMarker, uploadIDMarker, delimiter string, maxUploads int) (ListMultipartsInfo, error)
 }

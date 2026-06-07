@@ -179,6 +179,92 @@ func (sp *ServerPools) DeleteObjects(ctx context.Context, bucket string, objs []
 	return deleted, errs
 }
 
+// --- multipart upload (route to the owning set) --------------------------
+
+// NewMultipartUpload implements ObjectLayer.
+func (sp *ServerPools) NewMultipartUpload(ctx context.Context, bucket, object string, opts ObjectOptions) (string, error) {
+	return sp.route(object).newMultipartUpload(ctx, bucket, object, opts)
+}
+
+// PutObjectPart implements ObjectLayer.
+func (sp *ServerPools) PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, r *PutReader, opts ObjectOptions) (PartInfo, error) {
+	return sp.route(object).putObjectPart(ctx, bucket, object, uploadID, partID, r, opts)
+}
+
+// CompleteMultipartUpload implements ObjectLayer.
+func (sp *ServerPools) CompleteMultipartUpload(ctx context.Context, bucket, object, uploadID string, parts []CompletePart, opts ObjectOptions) (ObjectInfo, error) {
+	return sp.route(object).completeMultipartUpload(ctx, bucket, object, uploadID, parts, opts)
+}
+
+// AbortMultipartUpload implements ObjectLayer.
+func (sp *ServerPools) AbortMultipartUpload(ctx context.Context, bucket, object, uploadID string, _ ObjectOptions) error {
+	return sp.route(object).abortMultipartUpload(ctx, bucket, uploadID)
+}
+
+// ListObjectParts implements ObjectLayer.
+func (sp *ServerPools) ListObjectParts(ctx context.Context, bucket, object, uploadID string, partNumberMarker, maxParts int, _ ObjectOptions) (ListPartsInfo, error) {
+	return sp.route(object).listObjectParts(ctx, bucket, object, uploadID, partNumberMarker, maxParts)
+}
+
+// ListMultipartUploads implements ObjectLayer: it unions in-progress uploads
+// across every set and pages them by (object key, upload id).
+func (sp *ServerPools) ListMultipartUploads(ctx context.Context, bucket, prefix, keyMarker, uploadIDMarker, delimiter string, maxUploads int) (ListMultipartsInfo, error) {
+	if _, err := sp.GetBucketInfo(ctx, bucket); err != nil {
+		return ListMultipartsInfo{}, err
+	}
+	if maxUploads <= 0 {
+		maxUploads = 1000
+	}
+	var all []MultipartUpload
+	for _, set := range sp.allSets() {
+		ups, err := set.listMultipartUploads(ctx, bucket, prefix)
+		if err != nil {
+			continue
+		}
+		all = append(all, ups...)
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].Object != all[j].Object {
+			return all[i].Object < all[j].Object
+		}
+		return all[i].UploadID < all[j].UploadID
+	})
+
+	out := ListMultipartsInfo{
+		Bucket:         bucket,
+		Prefix:         prefix,
+		Delimiter:      delimiter,
+		KeyMarker:      keyMarker,
+		UploadIDMarker: uploadIDMarker,
+		MaxUploads:     maxUploads,
+	}
+	for _, up := range all {
+		if !afterUploadMarker(up, keyMarker, uploadIDMarker) {
+			continue
+		}
+		if len(out.Uploads) >= maxUploads {
+			out.IsTruncated = true
+			out.NextKeyMarker = out.Uploads[len(out.Uploads)-1].Object
+			out.NextUploadIDMarker = out.Uploads[len(out.Uploads)-1].UploadID
+			break
+		}
+		out.Uploads = append(out.Uploads, up)
+	}
+	return out, nil
+}
+
+// afterUploadMarker reports whether up sorts strictly after the (keyMarker,
+// uploadIDMarker) pagination cursor.
+func afterUploadMarker(up MultipartUpload, keyMarker, uploadIDMarker string) bool {
+	if keyMarker == "" {
+		return true
+	}
+	if up.Object != keyMarker {
+		return up.Object > keyMarker
+	}
+	return up.UploadID > uploadIDMarker
+}
+
 // --- listing (union across sets) -----------------------------------------
 
 // ListObjectsV2 implements ObjectLayer: it unions object keys across sets and pages them.

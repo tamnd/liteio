@@ -15,6 +15,17 @@ var (
 	ErrBucketNotEmpty = errors.New("object: bucket not empty")
 	// ErrObjectNotFound is returned for a missing object or version.
 	ErrObjectNotFound = errors.New("object: object not found")
+	// ErrNoSuchUpload is returned for a multipart upload ID that does not exist.
+	ErrNoSuchUpload = errors.New("object: no such multipart upload")
+	// ErrInvalidPart is returned when a completion part is missing or its ETag
+	// does not match the uploaded part.
+	ErrInvalidPart = errors.New("object: invalid part")
+	// ErrInvalidPartOrder is returned when completion parts are not in ascending
+	// part-number order.
+	ErrInvalidPartOrder = errors.New("object: invalid part order")
+	// ErrEntityTooSmall is returned when a non-final part is below the 5 MiB
+	// multipart minimum.
+	ErrEntityTooSmall = errors.New("object: part smaller than the 5 MiB minimum")
 	// ErrInvalidRange is returned when a requested byte range is unsatisfiable.
 	ErrInvalidRange = errors.New("object: invalid range")
 	// ErrReadQuorum means fewer than K drives returned a consistent view.
