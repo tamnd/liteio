@@ -170,7 +170,8 @@ the living source of truth and is updated as milestones land.
 | Reactive heal of under-replicated objects + MRF queue | implemented (M3) |
 | Cross-node metacache coherence (listings fresh on every node) | implemented (M3) |
 | PBAC policy engine (AWS IAM syntax, deny-by-default, canned policies) | implemented (M4) |
-| Identities / STS / bucket policies / admin API | planned (M4) |
+| Identity store (users / groups / service accounts, access-key resolution) | implemented (M4) |
+| STS / bucket policies / admin API | planned (M4) |
 | Free web console | planned (M5) |
 | Lifecycle / encryption / object lock | planned (M6) |
 | Replication / tiering / events | planned (M7) |
