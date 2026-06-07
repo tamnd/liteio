@@ -315,6 +315,7 @@ func (s *erasureSet) completeMultipartUpload(ctx context.Context, bucket, object
 	if countOK(writes) < s.writeQuorum() {
 		return ObjectInfo{}, ErrWriteQuorum
 	}
+	s.maybeHeal(countOK(writes), bucket, object, versionID)
 
 	// Reclaim the staging tree (best effort; orphaned staging is harmless).
 	_ = fanOut(ctx, len(s.drives), func(ctx context.Context, i int) (struct{}, error) {

@@ -44,6 +44,12 @@ type ServerPools struct {
 	// Locker contract.
 	nodeID    string
 	nsLockers []lock.Locker
+
+	// mrf is the reactive-heal queue. The write path enqueues an object that
+	// reached quorum but missed a drive; StartHealing's worker drains it and
+	// repairs the laggards. It is created in the constructor so enqueues are always
+	// counted, but only drained once StartHealing runs.
+	mrf *mrf
 }
 
 var _ ObjectLayer = (*ServerPools)(nil)
@@ -96,7 +102,40 @@ func NewServerPools(deploymentID [16]byte, pools []PoolConfig, opts ...Option) (
 	for _, opt := range opts {
 		opt(sp)
 	}
+
+	// Wire reactive heal: each set reports a partial write to the queue, which
+	// routes the heal back through the layer so it lands on the right set.
+	sp.mrf = newMRF(sp.healTask, DefaultMRFDepth)
+	for _, set := range sp.allSets() {
+		set.notifyPartial = func(bucket, object, versionID string) {
+			sp.mrf.enqueue(healTask{bucket: bucket, object: object, versionID: versionID})
+		}
+	}
 	return sp, nil
+}
+
+// StartHealing launches the reactive-heal worker, which drains the
+// most-recently-failed queue until ctx is cancelled. Call it once after
+// construction; a deployment that never starts it still records dropped tasks but
+// performs no reactive repair (the proactive scanner remains the durable
+// backstop).
+func (sp *ServerPools) StartHealing(ctx context.Context) {
+	go sp.mrf.run(ctx)
+}
+
+// MRFStats returns the reactive-heal queue's running counters.
+func (sp *ServerPools) MRFStats() MRFStats {
+	return MRFStats{
+		Dropped: sp.mrf.dropped.Load(),
+		Healed:  sp.mrf.healed.Load(),
+		Failed:  sp.mrf.failed.Load(),
+	}
+}
+
+// healTask routes a queued heal back to the set that owns the object and repairs
+// the version there.
+func (sp *ServerPools) healTask(ctx context.Context, t healTask) error {
+	return sp.route(t.object).healObject(ctx, t.bucket, t.object, t.versionID)
 }
 
 // NewSingleSet is a convenience constructor for one pool of one set, the common
