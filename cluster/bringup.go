@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/tamnd/liteio/cluster/lock"
 	"github.com/tamnd/liteio/object"
 	"github.com/tamnd/liteio/storage"
 	"github.com/tamnd/liteio/storage/local"
@@ -121,14 +122,28 @@ type PoolSpec struct {
 	Parity    int
 }
 
+// Membership carries this node's identity and the cluster lock quorum used to
+// install distributed namespace locking. NodeID is this node's name as the owner
+// of the locks it takes; Lockers is the lock set a namespace lock spans (this
+// node's own authority plus its peers, as built by LockQuorum). A zero
+// Membership leaves the object layer at its single-node lock default, which is
+// correct for a single-node deployment.
+type Membership struct {
+	NodeID  string
+	Lockers []lock.Locker
+}
+
 // BringUp computes each pool's layout, opens every drive through opener
 // (formatting the local ones), and assembles the object layer over them. All
 // pools share deploymentID as the placement salt. It returns the running object
 // layer and the computed layouts, the latter so the caller can record the
-// topology or derive the peer list. The namespace lockers are left at the
-// single-node default; populating them from the cluster's lock peers happens in
-// the membership step once the lock RPC listener is up.
-func BringUp(deploymentID [16]byte, specs []PoolSpec, opener Opener) (*object.ServerPools, []Layout, error) {
+// topology or derive the peer list.
+//
+// When m carries a lock quorum (m.Lockers non-empty) the object layer takes its
+// namespace locks across that quorum, so concurrent mutations of one key are
+// serialized cluster-wide. A zero Membership leaves the single-node in-process
+// lock in place.
+func BringUp(deploymentID [16]byte, specs []PoolSpec, opener Opener, m Membership) (*object.ServerPools, []Layout, error) {
 	if len(specs) == 0 {
 		return nil, nil, fmt.Errorf("cluster: bring-up needs at least one pool")
 	}
@@ -158,7 +173,11 @@ func BringUp(deploymentID [16]byte, specs []PoolSpec, opener Opener) (*object.Se
 		configs[pi] = object.PoolConfig{Sets: sets}
 	}
 
-	sp, err := object.NewServerPools(deploymentID, configs)
+	var opts []object.Option
+	if len(m.Lockers) > 0 {
+		opts = append(opts, object.WithLockers(m.NodeID, m.Lockers))
+	}
+	sp, err := object.NewServerPools(deploymentID, configs, opts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("cluster: assemble object layer: %w", err)
 	}
