@@ -4,7 +4,6 @@ package object
 
 import (
 	"context"
-	"sort"
 	"strings"
 
 	"github.com/tamnd/liteio/object/meta"
@@ -72,22 +71,13 @@ func (sp *ServerPools) ListObjectVersions(ctx context.Context, bucket, prefix, k
 		maxKeys = 1000
 	}
 
-	// Gather the union of object keys across every set.
-	seen := map[string]bool{}
-	var keys []string
-	for _, set := range sp.allSets() {
-		ks, err := set.walkObjects(ctx, bucket)
-		if err != nil {
-			continue
-		}
-		for _, k := range ks {
-			if !seen[k] {
-				seen[k] = true
-				keys = append(keys, k)
-			}
-		}
+	// The key universe comes from the metacache (the same walk ListObjectsV2 uses);
+	// only the set of keys is cached, so each key's full version history is still
+	// read fresh below.
+	keys, err := sp.bucketKeys(ctx, bucket)
+	if err != nil {
+		return ListObjectVersionsInfo{}, err
 	}
-	sort.Strings(keys)
 
 	versionsOf := func(key string) []ObjectInfo {
 		return sp.route(key).objectVersions(ctx, bucket, key)

@@ -34,6 +34,7 @@ type pool struct {
 type ServerPools struct {
 	deploymentID [16]byte
 	pools        []*pool
+	cache        *metacache
 }
 
 var _ ObjectLayer = (*ServerPools)(nil)
@@ -43,7 +44,7 @@ func NewServerPools(deploymentID [16]byte, pools []PoolConfig) (*ServerPools, er
 	if len(pools) == 0 {
 		return nil, ErrInvalidArgument
 	}
-	sp := &ServerPools{deploymentID: deploymentID}
+	sp := &ServerPools{deploymentID: deploymentID, cache: newMetacache()}
 	for _, pc := range pools {
 		if len(pc.Sets) == 0 {
 			return nil, ErrInvalidArgument
@@ -133,6 +134,7 @@ func (sp *ServerPools) DeleteBucket(ctx context.Context, bucket string, opts Del
 			firstErr = err
 		}
 	}
+	sp.cache.invalidate(bucket)
 	return firstErr
 }
 
@@ -140,7 +142,11 @@ func (sp *ServerPools) DeleteBucket(ctx context.Context, bucket string, opts Del
 
 // PutObject implements ObjectLayer: it routes the object to its set and writes it.
 func (sp *ServerPools) PutObject(ctx context.Context, bucket, object string, r *PutReader, opts ObjectOptions) (ObjectInfo, error) {
-	return sp.route(object).putObject(ctx, bucket, object, r, opts)
+	oi, err := sp.route(object).putObject(ctx, bucket, object, r, opts)
+	if err == nil {
+		sp.cache.add(bucket, object)
+	}
+	return oi, err
 }
 
 // GetObject implements ObjectLayer: it routes to the owning set and reads the object.
@@ -155,7 +161,11 @@ func (sp *ServerPools) GetObjectInfo(ctx context.Context, bucket, object string,
 
 // DeleteObject implements ObjectLayer.
 func (sp *ServerPools) DeleteObject(ctx context.Context, bucket, object string, opts ObjectOptions) (ObjectInfo, error) {
-	return sp.route(object).deleteObject(ctx, bucket, object, opts)
+	oi, err := sp.route(object).deleteObject(ctx, bucket, object, opts)
+	if err == nil {
+		sp.cache.invalidate(bucket)
+	}
+	return oi, err
 }
 
 // DeleteObjects implements ObjectLayer: it deletes a batch of keys, returning per-key results.
@@ -176,6 +186,7 @@ func (sp *ServerPools) DeleteObjects(ctx context.Context, bucket string, objs []
 			}
 		}
 	}
+	sp.cache.invalidate(bucket)
 	return deleted, errs
 }
 
@@ -193,7 +204,11 @@ func (sp *ServerPools) PutObjectPart(ctx context.Context, bucket, object, upload
 
 // CompleteMultipartUpload implements ObjectLayer.
 func (sp *ServerPools) CompleteMultipartUpload(ctx context.Context, bucket, object, uploadID string, parts []CompletePart, opts ObjectOptions) (ObjectInfo, error) {
-	return sp.route(object).completeMultipartUpload(ctx, bucket, object, uploadID, parts, opts)
+	oi, err := sp.route(object).completeMultipartUpload(ctx, bucket, object, uploadID, parts, opts)
+	if err == nil {
+		sp.cache.add(bucket, object)
+	}
+	return oi, err
 }
 
 // AbortMultipartUpload implements ObjectLayer.
@@ -275,6 +290,28 @@ func (sp *ServerPools) ListObjectsV2(ctx context.Context, bucket, prefix, token,
 	if maxKeys <= 0 {
 		maxKeys = 1000
 	}
+	keys, err := sp.bucketKeys(ctx, bucket)
+	if err != nil {
+		return ListObjectsV2Info{}, err
+	}
+	getInfo := func(key string) (ObjectInfo, error) {
+		return sp.route(key).getObjectInfo(ctx, bucket, key, ObjectOptions{})
+	}
+	return applyListing(keys, prefix, token, startAfter, delim, maxKeys, getInfo), nil
+}
+
+// bucketKeys returns the bucket's sorted, de-duplicated object-key union across
+// every set, served from the metacache (populated by walkUnion on a miss). A
+// paginated client reuses one walk across pages; an unchanged bucket reuses it
+// across repeat lists (spec doc 07.5).
+func (sp *ServerPools) bucketKeys(ctx context.Context, bucket string) ([]string, error) {
+	return sp.cache.keys(bucket, func() ([]string, error) {
+		return sp.walkUnion(ctx, bucket), nil
+	})
+}
+
+// walkUnion descends every set's namespace and returns the sorted union of keys.
+func (sp *ServerPools) walkUnion(ctx context.Context, bucket string) []string {
 	seen := map[string]bool{}
 	var keys []string
 	for _, set := range sp.allSets() {
@@ -290,8 +327,5 @@ func (sp *ServerPools) ListObjectsV2(ctx context.Context, bucket, prefix, token,
 		}
 	}
 	sort.Strings(keys)
-	getInfo := func(key string) (ObjectInfo, error) {
-		return sp.route(key).getObjectInfo(ctx, bucket, key, ObjectOptions{})
-	}
-	return applyListing(keys, prefix, token, startAfter, delim, maxKeys, getInfo), nil
+	return keys
 }
