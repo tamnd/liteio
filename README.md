@@ -138,7 +138,8 @@ the living source of truth and is updated as milestones land.
 | Inter-node RPC transport + remote drive | implemented (M3) |
 | Distributed lock service (quorum, leases) | implemented (M3) |
 | Namespace locking on mutating operations | implemented (M3) |
-| Distributed cluster (placement, heal, mTLS) | in progress (M3) |
+| Mutual TLS for inter-node transport | implemented (M3) |
+| Distributed cluster (placement, heal, membership) | in progress (M3) |
 | IAM / STS / policies | planned (M4) |
 | Free web console | planned (M5) |
 | Lifecycle / encryption / object lock | planned (M6) |
