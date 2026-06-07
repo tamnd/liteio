@@ -89,20 +89,28 @@ make test           # full unit + integration suite
 make bench          # run every benchmark once (smoke)
 ```
 
-Run a single-node server over a set of drive mounts (see `liteio server --help`
-for the current flag set as it lands):
+Run a single-node server over a set of drive directories (see `liteio --help`
+for the full flag set):
 
 ```sh
-liteio server --address :9000 --console-address :9001 /mnt/drive{1...8}
+liteio \
+  --address :9000 \
+  --drives /mnt/drive1,/mnt/drive2,/mnt/drive3,/mnt/drive4,/mnt/drive5,/mnt/drive6,/mnt/drive7,/mnt/drive8 \
+  --parity 4 \
+  --access-key liteioadmin --secret-key liteioadmin
 ```
 
-Point any S3 client at it:
+Point an S3 client at it:
 
 ```sh
-aws --endpoint-url http://localhost:9000 s3 mb s3://photos
-aws --endpoint-url http://localhost:9000 s3 cp cat.jpg s3://photos/cat.jpg
+aws --endpoint-url http://localhost:9000 s3api create-bucket --bucket photos
+aws --endpoint-url http://localhost:9000 s3api put-object --bucket photos --key cat.jpg --body cat.jpg
 aws --endpoint-url http://localhost:9000 s3 ls s3://photos
 ```
+
+> The default `aws s3 cp` uploader streams with an `aws-chunked` signature whose
+> decoder is a follow-up (see the compatibility matrix); presigned URLs, `boto3`,
+> and the `s3api` verbs above work against the current build.
 
 ## Compatibility matrix
 
@@ -114,12 +122,15 @@ the living source of truth and is updated as milestones land.
 | Deterministic placement (pool/set/drive) | implemented |
 | Reed-Solomon erasure coding + HighwayHash bitrot | implemented |
 | `obj.meta` self-describing metadata format | implemented |
-| SigV4 (header / presigned / streaming) | in progress |
-| Single-part PUT/GET/HEAD/DELETE | in progress |
-| Bucket lifecycle (Create/Delete/List) | in progress |
-| ListObjectsV2 | in progress |
+| SigV4 header + presigned auth | implemented |
+| SigV4 streaming (`aws-chunked`) | planned (M2) |
+| Single-part PUT/GET/HEAD/DELETE | implemented |
+| Bucket lifecycle (Create/Delete/List/Head/Location) | implemented |
+| ListObjectsV2 (prefix / delimiter / pagination) | implemented |
+| Batch delete (`DeleteObjects`) | implemented |
+| Versioning + delete markers (engine) | implemented |
+| Versioning surfaced over S3 | planned (M2) |
 | Multipart upload | planned (M2) |
-| Versioning + delete markers | planned (M2) |
 | Distributed multi-node cluster | planned (M3) |
 | IAM / STS / policies | planned (M4) |
 | Free web console | planned (M5) |

@@ -1,0 +1,165 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package s3
+
+import (
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/tamnd/liteio/auth"
+	"github.com/tamnd/liteio/object"
+	"github.com/tamnd/liteio/s3/sign"
+)
+
+// Server is the S3 HTTP front door. It authenticates each request with SigV4,
+// resolves the bucket/object from the URL (path-style or virtual-host), and
+// dispatches to the handler that calls the object layer.
+type Server struct {
+	layer  object.ObjectLayer
+	creds  auth.CredentialStore
+	domain string           // virtual-host base domain ("" disables vhost)
+	now    func() time.Time // clock seam for signature skew (tests inject)
+}
+
+// Option configures a Server.
+type Option func(*Server)
+
+// WithDomain enables virtual-host-style addressing for the given base domain
+// (e.g. "s3.example.com" routes bucket.s3.example.com). Empty keeps path-style.
+func WithDomain(domain string) Option { return func(s *Server) { s.domain = domain } }
+
+// WithClock overrides the clock used for signature skew checks (for tests).
+func WithClock(now func() time.Time) Option { return func(s *Server) { s.now = now } }
+
+// NewServer builds the front door over an object layer and credential store.
+func NewServer(layer object.ObjectLayer, creds auth.CredentialStore, opts ...Option) *Server {
+	s := &Server{layer: layer, creds: creds, now: time.Now}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
+}
+
+// resource holds the bucket/object a request addresses.
+type resource struct {
+	bucket string
+	object string
+}
+
+// ServeHTTP implements http.Handler: authenticate, parse the resource, dispatch.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	requestID := newRequestID()
+	setCommonHeaders(w, requestID)
+
+	if _, serr := sign.Verify(r, s.creds, s.now()); serr != nil {
+		writeError(w, requestID, r.URL.Path, APIError{Code: serr.Code, Description: serr.Message, HTTPStatus: signStatus(serr.Code)})
+		return
+	}
+
+	res := s.parseResource(r)
+	switch {
+	case res.bucket == "":
+		s.serveService(w, r, requestID)
+	case res.object == "":
+		s.serveBucket(w, r, requestID, res.bucket)
+	default:
+		s.serveObject(w, r, requestID, res.bucket, res.object)
+	}
+}
+
+// parseResource resolves bucket and object key from the request, honoring
+// virtual-host addressing when a domain is configured.
+func (s *Server) parseResource(r *http.Request) resource {
+	host := r.Host
+	if i := strings.IndexByte(host, ':'); i >= 0 {
+		host = host[:i]
+	}
+	// Virtual-host style: <bucket>.<domain>.
+	if s.domain != "" && host != s.domain && strings.HasSuffix(host, "."+s.domain) {
+		bucket := strings.TrimSuffix(host, "."+s.domain)
+		return resource{bucket: bucket, object: strings.TrimPrefix(r.URL.Path, "/")}
+	}
+	// Path style: /<bucket>/<key...>.
+	p := strings.TrimPrefix(r.URL.Path, "/")
+	if p == "" {
+		return resource{}
+	}
+	if i := strings.IndexByte(p, '/'); i >= 0 {
+		return resource{bucket: p[:i], object: p[i+1:]}
+	}
+	return resource{bucket: p}
+}
+
+// serveService handles service-level requests (the bucket-less root).
+func (s *Server) serveService(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method == http.MethodGet {
+		s.listBuckets(w, r, requestID)
+		return
+	}
+	writeError(w, requestID, r.URL.Path, errMethodNotAllowed)
+}
+
+// serveBucket handles bucket-level requests and bucket subresources.
+func (s *Server) serveBucket(w http.ResponseWriter, r *http.Request, requestID, bucket string) {
+	q := r.URL.Query()
+	switch r.Method {
+	case http.MethodGet:
+		switch {
+		case q.Has("location"):
+			s.getBucketLocation(w, r, requestID, bucket)
+		case q.Has("versioning"):
+			s.getBucketVersioning(w, r, requestID, bucket)
+		default:
+			s.listObjectsV2(w, r, requestID, bucket)
+		}
+	case http.MethodPut:
+		if q.Has("versioning") {
+			s.putBucketVersioning(w, r, requestID, bucket)
+			return
+		}
+		s.createBucket(w, r, requestID, bucket)
+	case http.MethodHead:
+		s.headBucket(w, r, requestID, bucket)
+	case http.MethodDelete:
+		s.deleteBucket(w, r, requestID, bucket)
+	case http.MethodPost:
+		if q.Has("delete") {
+			s.deleteObjects(w, r, requestID, bucket)
+			return
+		}
+		writeError(w, requestID, r.URL.Path, errMethodNotAllowed)
+	default:
+		writeError(w, requestID, r.URL.Path, errMethodNotAllowed)
+	}
+}
+
+// serveObject handles object-level requests.
+func (s *Server) serveObject(w http.ResponseWriter, r *http.Request, requestID, bucket, object string) {
+	switch r.Method {
+	case http.MethodPut:
+		s.putObject(w, r, requestID, bucket, object)
+	case http.MethodGet:
+		s.getObject(w, r, requestID, bucket, object)
+	case http.MethodHead:
+		s.headObject(w, r, requestID, bucket, object)
+	case http.MethodDelete:
+		s.deleteObject(w, r, requestID, bucket, object)
+	default:
+		writeError(w, requestID, r.URL.Path, errMethodNotAllowed)
+	}
+}
+
+// signStatus maps a SigV4 error code to its HTTP status.
+func signStatus(code string) int {
+	switch code {
+	case "SignatureDoesNotMatch", "InvalidAccessKeyId", "AccessDenied":
+		return http.StatusForbidden
+	case "RequestTimeTooSkewed":
+		return http.StatusForbidden
+	case "MissingSecurityHeader", "AuthorizationHeaderMalformed", "InvalidRequest":
+		return http.StatusBadRequest
+	default:
+		return http.StatusForbidden
+	}
+}
