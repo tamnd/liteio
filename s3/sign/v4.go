@@ -13,6 +13,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -33,7 +34,46 @@ const (
 	unsignedBody = "UNSIGNED-PAYLOAD"
 	// EmptyPayloadHash is SHA256("") — the body hash a request with no body uses.
 	EmptyPayloadHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+	// Streaming (aws-chunked) payload sentinels (doc 02 §2.3). The body is framed
+	// chunks; the "...-PAYLOAD" forms sign each chunk, the "...-TRAILER" forms add
+	// a trailing checksum header, and the UNSIGNED form skips per-chunk signing.
+	streamingSigned          = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
+	streamingSignedTrailer   = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER"
+	streamingUnsignedTrailer = "STREAMING-UNSIGNED-PAYLOAD-TRAILER"
+
+	// chunkStringToSignAlgo is the per-chunk string-to-sign algorithm line.
+	chunkStringToSignAlgo = "AWS4-HMAC-SHA256-PAYLOAD"
 )
+
+// VerifiedRequest is the result of a successful Verify. It names the access key
+// that signed the request and, for an aws-chunked streaming body, carries what
+// DecodeBody needs to verify each chunk's rolling signature.
+type VerifiedRequest struct {
+	// AccessKey is the credential whose secret signed the request.
+	AccessKey string
+
+	streaming     bool
+	signed        bool // per-chunk signatures present (vs unsigned-trailer)
+	seedSignature string
+	signingKey    []byte
+	amzDate       string
+	scope         credentialScope
+}
+
+// DecodeBody returns a reader over the real object bytes. For a normal request it
+// is body unchanged; for an aws-chunked streaming upload it is a reader that
+// de-frames the chunks and verifies each chunk signature against the rolling
+// chain seeded by the request's header signature.
+func (vr *VerifiedRequest) DecodeBody(body io.Reader) io.Reader {
+	if !vr.streaming {
+		return body
+	}
+	return newChunkedReader(body, vr)
+}
+
+// IsStreaming reports whether the request body is aws-chunked framed.
+func (vr *VerifiedRequest) IsStreaming() bool { return vr.streaming }
 
 // Error is a signing failure mapped to an S3 code by the caller. Code is the S3
 // error code (e.g. SignatureDoesNotMatch); Message is human detail.
@@ -74,7 +114,7 @@ func (c credentialScope) scopeString() string {
 // a region: the scope region is echoed back in the signing key, so any region a
 // client signs with verifies as long as the secret matches (the MinIO-style lax
 // default, doc 02 §2.3).
-func Verify(r *http.Request, store auth.CredentialStore, now time.Time) (string, *Error) {
+func Verify(r *http.Request, store auth.CredentialStore, now time.Time) (*VerifiedRequest, *Error) {
 	if r.URL.Query().Get("X-Amz-Signature") != "" {
 		return verifyPresigned(r, store, now)
 	}
@@ -82,30 +122,30 @@ func Verify(r *http.Request, store auth.CredentialStore, now time.Time) (string,
 }
 
 // verifyHeader handles Authorization-header SigV4.
-func verifyHeader(r *http.Request, store auth.CredentialStore, now time.Time) (string, *Error) {
+func verifyHeader(r *http.Request, store auth.CredentialStore, now time.Time) (*VerifiedRequest, *Error) {
 	authHdr := r.Header.Get("Authorization")
 	if authHdr == "" {
-		return "", errMissingAuth
+		return nil, errMissingAuth
 	}
 	scope, signedHeaders, providedSig, err := parseAuthHeader(authHdr)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if scope.service != serviceS3 {
-		return "", errBadAlgo
+		return nil, errBadAlgo
 	}
 
 	t, terr := requestTime(r)
 	if terr != nil {
-		return "", terr
+		return nil, terr
 	}
 	if absDur(now.Sub(t)) > maxSkew {
-		return "", errSkew
+		return nil, errSkew
 	}
 
 	cred, ok := store.Get(scope.accessKey)
 	if !ok {
-		return "", errNoKey
+		return nil, errNoKey
 	}
 
 	payloadHash := r.Header.Get("X-Amz-Content-Sha256")
@@ -117,42 +157,55 @@ func verifyHeader(r *http.Request, store auth.CredentialStore, now time.Time) (s
 	sts := stringToSign(t, scope, canonReq)
 	want := computeSignature(cred.SecretKey, scope, sts)
 	if subtle.ConstantTimeCompare([]byte(want), []byte(providedSig)) != 1 {
-		return "", errMismatch
+		return nil, errMismatch
 	}
-	return scope.accessKey, nil
+
+	vr := &VerifiedRequest{AccessKey: scope.accessKey}
+	switch payloadHash {
+	case streamingSigned, streamingSignedTrailer:
+		vr.streaming = true
+		vr.signed = true
+		vr.seedSignature = want
+		vr.signingKey = signingKey(cred.SecretKey, scope)
+		vr.amzDate = t.UTC().Format(iso8601)
+		vr.scope = scope
+	case streamingUnsignedTrailer:
+		vr.streaming = true
+	}
+	return vr, nil
 }
 
 // verifyPresigned handles query-string (presigned URL) SigV4.
-func verifyPresigned(r *http.Request, store auth.CredentialStore, now time.Time) (string, *Error) {
+func verifyPresigned(r *http.Request, store auth.CredentialStore, now time.Time) (*VerifiedRequest, *Error) {
 	q := r.URL.Query()
 	if q.Get("X-Amz-Algorithm") != algorithm {
-		return "", errBadAlgo
+		return nil, errBadAlgo
 	}
 	scope, perr := parseCredential(q.Get("X-Amz-Credential"))
 	if perr != nil {
-		return "", perr
+		return nil, perr
 	}
 	if scope.service != serviceS3 {
-		return "", errBadAlgo
+		return nil, errBadAlgo
 	}
 	t, terr := time.Parse(iso8601, q.Get("X-Amz-Date"))
 	if terr != nil {
-		return "", errBadDate
+		return nil, errBadDate
 	}
 	expires, eerr := time.ParseDuration(q.Get("X-Amz-Expires") + "s")
 	if eerr != nil || expires <= 0 || expires > maxPresign {
-		return "", errMalformed
+		return nil, errMalformed
 	}
 	if now.After(t.Add(expires)) {
-		return "", errExpired
+		return nil, errExpired
 	}
 	if absDur(now.Sub(t)) > maxSkew+expires {
-		return "", errSkew
+		return nil, errSkew
 	}
 
 	cred, ok := store.Get(scope.accessKey)
 	if !ok {
-		return "", errNoKey
+		return nil, errNoKey
 	}
 
 	signedHeaders := strings.Split(q.Get("X-Amz-SignedHeaders"), ";")
@@ -164,9 +217,9 @@ func verifyPresigned(r *http.Request, store auth.CredentialStore, now time.Time)
 	sts := stringToSign(t, scope, canonReq)
 	want := computeSignature(cred.SecretKey, scope, sts)
 	if subtle.ConstantTimeCompare([]byte(want), []byte(providedSig)) != 1 {
-		return "", errMismatch
+		return nil, errMismatch
 	}
-	return scope.accessKey, nil
+	return &VerifiedRequest{AccessKey: scope.accessKey}, nil
 }
 
 // --- canonicalization -----------------------------------------------------
@@ -251,13 +304,17 @@ func stringToSign(t time.Time, scope credentialScope, canonReq string) string {
 	return algorithm + "\n" + t.UTC().Format(iso8601) + "\n" + scope.scopeString() + "\n" + hex.EncodeToString(h[:])
 }
 
-// computeSignature derives the signing key and signs the string-to-sign.
-func computeSignature(secret string, scope credentialScope, sts string) string {
+// signingKey derives the SigV4 signing key for a secret and scope.
+func signingKey(secret string, scope credentialScope) []byte {
 	kDate := hmacSHA256([]byte("AWS4"+secret), scope.date)
 	kRegion := hmacSHA256(kDate, scope.region)
 	kService := hmacSHA256(kRegion, scope.service)
-	kSigning := hmacSHA256(kService, terminator)
-	return hex.EncodeToString(hmacSHA256(kSigning, sts))
+	return hmacSHA256(kService, terminator)
+}
+
+// computeSignature derives the signing key and signs the string-to-sign.
+func computeSignature(secret string, scope credentialScope, sts string) string {
+	return hex.EncodeToString(hmacSHA256(signingKey(secret, scope), sts))
 }
 
 func hmacSHA256(key []byte, data string) []byte {

@@ -3,7 +3,9 @@
 package s3
 
 import (
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,6 +13,15 @@ import (
 	"github.com/tamnd/liteio/object"
 	"github.com/tamnd/liteio/s3/sign"
 )
+
+// decodedBody adapts a decoded streaming reader back into an io.ReadCloser, so
+// the handler reads object bytes while Close still releases the original body.
+type decodedBody struct {
+	io.Reader
+	closer io.Closer
+}
+
+func (d *decodedBody) Close() error { return d.closer.Close() }
 
 // Server is the S3 HTTP front door. It authenticates each request with SigV4,
 // resolves the bucket/object from the URL (path-style or virtual-host), and
@@ -52,9 +63,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestID := newRequestID()
 	setCommonHeaders(w, requestID)
 
-	if _, serr := sign.Verify(r, s.creds, s.now()); serr != nil {
+	vr, serr := sign.Verify(r, s.creds, s.now())
+	if serr != nil {
 		writeError(w, requestID, r.URL.Path, APIError{Code: serr.Code, Description: serr.Message, HTTPStatus: signStatus(serr.Code)})
 		return
+	}
+	// For an aws-chunked upload, hand handlers a reader over the decoded object
+	// bytes (with verified chunk signatures) and the real content length.
+	if vr.IsStreaming() {
+		orig := r.Body
+		r.Body = &decodedBody{Reader: vr.DecodeBody(orig), closer: orig}
+		if dec := r.Header.Get("x-amz-decoded-content-length"); dec != "" {
+			if n, err := strconv.ParseInt(dec, 10, 64); err == nil {
+				r.ContentLength = n
+			}
+		}
 	}
 
 	res := s.parseResource(r)
@@ -85,8 +108,8 @@ func (s *Server) parseResource(r *http.Request) resource {
 	if p == "" {
 		return resource{}
 	}
-	if i := strings.IndexByte(p, '/'); i >= 0 {
-		return resource{bucket: p[:i], object: p[i+1:]}
+	if bucket, key, ok := strings.Cut(p, "/"); ok {
+		return resource{bucket: bucket, object: key}
 	}
 	return resource{bucket: p}
 }

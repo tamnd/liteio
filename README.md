@@ -108,9 +108,9 @@ aws --endpoint-url http://localhost:9000 s3api put-object --bucket photos --key 
 aws --endpoint-url http://localhost:9000 s3 ls s3://photos
 ```
 
-> The default `aws s3 cp` uploader streams with an `aws-chunked` signature whose
-> decoder is a follow-up (see the compatibility matrix); presigned URLs, `boto3`,
-> and the `s3api` verbs above work against the current build.
+> The default `aws s3 cp` uploader streams with an `aws-chunked` signature; its
+> chunks are decoded and individually signature-verified, so the CLI, presigned
+> URLs, `boto3`, and the `s3api` verbs above all work against the current build.
 
 ## Compatibility matrix
 
@@ -123,7 +123,7 @@ the living source of truth and is updated as milestones land.
 | Reed-Solomon erasure coding + HighwayHash bitrot | implemented |
 | `obj.meta` self-describing metadata format | implemented |
 | SigV4 header + presigned auth | implemented |
-| SigV4 streaming (`aws-chunked`) | planned (M2) |
+| SigV4 streaming (`aws-chunked`) | implemented |
 | Single-part PUT/GET/HEAD/DELETE | implemented |
 | Bucket lifecycle (Create/Delete/List/Head/Location) | implemented |
 | ListObjectsV2 (prefix / delimiter / pagination) | implemented |
