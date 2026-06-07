@@ -42,6 +42,11 @@ type erasureSet struct {
 	deploymentID [16]byte
 	inlineMax    int64
 	clock        func() time.Time
+
+	// notifyPartial, when set, is called after a write that reached quorum but did
+	// not land on every drive, so the reactive-heal queue can repair the laggards.
+	// It is nil until the owning ServerPools wires it.
+	notifyPartial func(bucket, object, versionID string)
 }
 
 // newSet builds an erasure set over drives with M parity shards. K = N - M.
@@ -332,6 +337,7 @@ func (s *erasureSet) putObject(ctx context.Context, bucket, object string, r *Pu
 	if countOK(writes) < s.writeQuorum() {
 		return ObjectInfo{}, fmt.Errorf("%w: %d/%d drives", ErrWriteQuorum, countOK(writes), len(s.drives))
 	}
+	s.maybeHeal(countOK(writes), bucket, object, versionID)
 
 	return ObjectInfo{
 		Bucket:      bucket,

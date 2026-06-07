@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/tamnd/liteio/auth"
+	"github.com/tamnd/liteio/object"
 	"github.com/tamnd/liteio/s3"
 )
 
@@ -80,6 +81,12 @@ func run(argv []string) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Drain the reactive-heal queue for the life of the process, repairing objects
+	// that reached quorum while a drive was briefly down.
+	if sp, ok := layer.(*object.ServerPools); ok {
+		sp.StartHealing(ctx)
+	}
 
 	errCh := make(chan error, 2)
 	go func() {

@@ -167,7 +167,8 @@ the living source of truth and is updated as milestones land.
 | Node membership server (serves drives + lock endpoint, mTLS) | implemented (M3) |
 | Distributed namespace locking (object layer over a lock quorum) | implemented (M3) |
 | Distributed node command (serves drives + lock quorum, mTLS) | implemented (M3) |
-| Distributed cluster (reactive heal, cross-node cache coherence) | in progress (M3) |
+| Reactive heal of under-replicated objects + MRF queue | implemented (M3) |
+| Distributed cluster (cross-node cache coherence) | in progress (M3) |
 | IAM / STS / policies | planned (M4) |
 | Free web console | planned (M5) |
 | Lifecycle / encryption / object lock | planned (M6) |
