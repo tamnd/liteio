@@ -51,6 +51,52 @@ type ObjectOptions struct {
 	UserDefined map[string]string
 	// MIME shortcut for the common content-type header.
 	ContentType string
+	// Range, when set, limits a GetObject to a byte range of the object.
+	Range *HTTPRangeSpec
+}
+
+// HTTPRangeSpec is a parsed HTTP Range request over a single object. It models
+// the two forms S3 honors: a closed/open byte range (bytes=start-[end]) and a
+// suffix range (bytes=-N, the trailing N bytes). The S3 front door parses the
+// Range header into this; the object layer resolves it against the real size.
+type HTTPRangeSpec struct {
+	// IsSuffix selects the trailing Start bytes of the object (bytes=-N form).
+	IsSuffix bool
+	// Start is the first byte offset, or the suffix length when IsSuffix.
+	Start int64
+	// End is the last byte offset (inclusive); -1 means "to the end".
+	End int64
+}
+
+// GetOffsetLength resolves the range against an object of resourceSize bytes,
+// returning the read offset and length. A nil spec covers the whole object. An
+// unsatisfiable range (offset past the end, inverted bounds, empty suffix)
+// returns ErrInvalidRange, which the front door renders as 416.
+func (h *HTTPRangeSpec) GetOffsetLength(resourceSize int64) (start, length int64, err error) {
+	if h == nil {
+		return 0, resourceSize, nil
+	}
+	if h.IsSuffix {
+		n := h.Start
+		if n <= 0 {
+			return 0, 0, ErrInvalidRange
+		}
+		if n > resourceSize {
+			n = resourceSize
+		}
+		return resourceSize - n, n, nil
+	}
+	if h.Start < 0 || h.Start >= resourceSize {
+		return 0, 0, ErrInvalidRange
+	}
+	end := h.End
+	if end < 0 || end >= resourceSize {
+		end = resourceSize - 1
+	}
+	if h.Start > end {
+		return 0, 0, ErrInvalidRange
+	}
+	return h.Start, end - h.Start + 1, nil
 }
 
 // BucketInfo describes a bucket.

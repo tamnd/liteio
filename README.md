@@ -125,6 +125,8 @@ the living source of truth and is updated as milestones land.
 | SigV4 header + presigned auth | implemented |
 | SigV4 streaming (`aws-chunked`) | implemented |
 | Single-part PUT/GET/HEAD/DELETE | implemented |
+| Range GET (`bytes=`, suffix, 206/416) | implemented |
+| Conditional GET/HEAD (If-Match / If-None-Match / If-\[Un\]Modified-Since) | implemented |
 | Bucket lifecycle (Create/Delete/List/Head/Location) | implemented |
 | ListObjectsV2 (prefix / delimiter / pagination) | implemented |
 | Batch delete (`DeleteObjects`) | implemented |

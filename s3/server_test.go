@@ -238,6 +238,121 @@ func TestStreamingPutGet(t *testing.T) {
 	}
 }
 
+// doHdr signs and sends a GET/HEAD carrying extra request headers, draining the
+// response. It is the conditional/range counterpart to do().
+func (h *harness) doHdr(method, path string, headers map[string]string) result {
+	h.t.Helper()
+	req, err := http.NewRequest(method, h.srv.URL+path, nil)
+	if err != nil {
+		h.t.Fatalf("new request: %v", err)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	sign.SignHeader(req, testCreds, "us-east-1", sign.EmptyPayloadHash, time.Now().UTC())
+	resp, err := h.srv.Client().Do(req)
+	if err != nil {
+		h.t.Fatalf("do %s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+	rb, err := io.ReadAll(resp.Body)
+	if err != nil {
+		h.t.Fatalf("read body: %v", err)
+	}
+	return result{status: resp.StatusCode, header: resp.Header, body: rb}
+}
+
+func TestRangeGet(t *testing.T) {
+	h := newHarness(t)
+	mustStatus(t, h.do(http.MethodPut, "/rng", nil, nil), http.StatusOK)
+	payload := make([]byte, 20000)
+	for i := range payload {
+		payload[i] = byte(i)
+	}
+	mustStatus(t, h.do(http.MethodPut, "/rng/obj", payload, nil), http.StatusOK)
+
+	// Closed range.
+	res := h.doHdr(http.MethodGet, "/rng/obj", map[string]string{"Range": "bytes=100-199"})
+	mustStatus(t, res, http.StatusPartialContent)
+	if cr := res.header.Get("Content-Range"); cr != "bytes 100-199/20000" {
+		t.Fatalf("Content-Range = %q", cr)
+	}
+	if !bytes.Equal(res.body, payload[100:200]) {
+		t.Fatalf("closed range body mismatch: %d bytes", len(res.body))
+	}
+
+	// Open range to the end.
+	res = h.doHdr(http.MethodGet, "/rng/obj", map[string]string{"Range": "bytes=19990-"})
+	mustStatus(t, res, http.StatusPartialContent)
+	if !bytes.Equal(res.body, payload[19990:]) {
+		t.Fatalf("open range mismatch: %d bytes", len(res.body))
+	}
+
+	// Suffix range.
+	res = h.doHdr(http.MethodGet, "/rng/obj", map[string]string{"Range": "bytes=-500"})
+	mustStatus(t, res, http.StatusPartialContent)
+	if cr := res.header.Get("Content-Range"); cr != "bytes 19500-19999/20000" {
+		t.Fatalf("suffix Content-Range = %q", cr)
+	}
+	if !bytes.Equal(res.body, payload[19500:]) {
+		t.Fatalf("suffix body mismatch: %d bytes", len(res.body))
+	}
+
+	// Unsatisfiable range -> 416 with the total size echoed.
+	res = h.doHdr(http.MethodGet, "/rng/obj", map[string]string{"Range": "bytes=999999-"})
+	mustStatus(t, res, http.StatusRequestedRangeNotSatisfiable)
+	if cr := res.header.Get("Content-Range"); cr != "bytes */20000" {
+		t.Fatalf("416 Content-Range = %q", cr)
+	}
+
+	// A HEAD with a range reports the partial length but no body.
+	res = h.doHdr(http.MethodHead, "/rng/obj", map[string]string{"Range": "bytes=0-9"})
+	mustStatus(t, res, http.StatusPartialContent)
+	if res.header.Get("Content-Length") != "10" {
+		t.Fatalf("HEAD range Content-Length = %q", res.header.Get("Content-Length"))
+	}
+}
+
+func TestConditionalGet(t *testing.T) {
+	h := newHarness(t)
+	mustStatus(t, h.do(http.MethodPut, "/cond", nil, nil), http.StatusOK)
+	put := h.do(http.MethodPut, "/cond/obj", []byte("conditional body"), nil)
+	mustStatus(t, put, http.StatusOK)
+	etag := put.header.Get("ETag")
+
+	// If-None-Match with the current ETag -> 304.
+	res := h.doHdr(http.MethodGet, "/cond/obj", map[string]string{"If-None-Match": etag})
+	mustStatus(t, res, http.StatusNotModified)
+	if len(res.body) != 0 {
+		t.Fatalf("304 should have no body, got %d bytes", len(res.body))
+	}
+
+	// If-None-Match with a different ETag -> 200 with body.
+	res = h.doHdr(http.MethodGet, "/cond/obj", map[string]string{"If-None-Match": "\"deadbeef\""})
+	mustStatus(t, res, http.StatusOK)
+	if string(res.body) != "conditional body" {
+		t.Fatalf("body = %q", res.body)
+	}
+
+	// If-Match with the current ETag -> 200.
+	res = h.doHdr(http.MethodGet, "/cond/obj", map[string]string{"If-Match": etag})
+	mustStatus(t, res, http.StatusOK)
+
+	// If-Match with a stale ETag -> 412.
+	res = h.doHdr(http.MethodGet, "/cond/obj", map[string]string{"If-Match": "\"stale\""})
+	mustStatus(t, res, http.StatusPreconditionFailed)
+
+	// If-Modified-Since in the future -> 304 (not modified since then).
+	future := time.Now().UTC().Add(time.Hour).Format(http.TimeFormat)
+	res = h.doHdr(http.MethodGet, "/cond/obj", map[string]string{"If-Modified-Since": future})
+	mustStatus(t, res, http.StatusNotModified)
+
+	// If-Unmodified-Since in the past -> 412 (it was modified after then).
+	past := time.Now().UTC().Add(-time.Hour).Format(http.TimeFormat)
+	res = h.doHdr(http.MethodGet, "/cond/obj", map[string]string{"If-Unmodified-Since": past})
+	mustStatus(t, res, http.StatusPreconditionFailed)
+}
+
 func TestPutToMissingBucket(t *testing.T) {
 	h := newHarness(t)
 	resp := h.do(http.MethodPut, "/ghost/key", []byte("x"), nil)

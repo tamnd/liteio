@@ -15,6 +15,8 @@ var (
 	ErrBucketNotEmpty = errors.New("object: bucket not empty")
 	// ErrObjectNotFound is returned for a missing object or version.
 	ErrObjectNotFound = errors.New("object: object not found")
+	// ErrInvalidRange is returned when a requested byte range is unsatisfiable.
+	ErrInvalidRange = errors.New("object: invalid range")
 	// ErrReadQuorum means fewer than K drives returned a consistent view.
 	ErrReadQuorum = errors.New("object: read quorum not met")
 	// ErrWriteQuorum means fewer than the write-quorum drives accepted the write.

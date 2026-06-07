@@ -48,6 +48,8 @@ var (
 	errBucketAlreadyOwnedByYou = APIError{"BucketAlreadyOwnedByYou", "Your previous request to create the named bucket succeeded and you already own it.", http.StatusConflict}
 	errInvalidBucketName       = APIError{"InvalidBucketName", "The specified bucket is not valid.", http.StatusBadRequest}
 	errInvalidArgument         = APIError{"InvalidArgument", "Invalid Argument.", http.StatusBadRequest}
+	errInvalidRange            = APIError{"InvalidRange", "The requested range is not satisfiable.", http.StatusRequestedRangeNotSatisfiable}
+	errPreconditionFailed      = APIError{"PreconditionFailed", "At least one of the preconditions you specified did not hold.", http.StatusPreconditionFailed}
 	errInvalidRequest          = APIError{"InvalidRequest", "Invalid Request.", http.StatusBadRequest}
 	errMalformedXML            = APIError{"MalformedXML", "The XML you provided was not well-formed or did not validate against our published schema.", http.StatusBadRequest}
 	errMissingContentLength    = APIError{"MissingContentLength", "You must provide the Content-Length HTTP header.", http.StatusBadRequest}
@@ -79,6 +81,8 @@ func toAPIError(err error) APIError {
 		return errBucketNotEmpty
 	case errors.Is(err, object.ErrInvalidArgument):
 		return errInvalidArgument
+	case errors.Is(err, object.ErrInvalidRange):
+		return errInvalidRange
 	case errors.Is(err, object.ErrNotImplemented):
 		return errNotImplemented
 	case errors.Is(err, object.ErrReadQuorum), errors.Is(err, object.ErrWriteQuorum):
