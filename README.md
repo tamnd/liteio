@@ -136,7 +136,8 @@ the living source of truth and is updated as milestones land.
 | Multipart upload (Create/Upload/Complete/Abort/List) | implemented |
 | CopyObject + UploadPartCopy (`x-amz-copy-source`) | implemented |
 | Inter-node RPC transport + remote drive | implemented (M3) |
-| Distributed cluster (placement, locks, heal, mTLS) | in progress (M3) |
+| Distributed lock service (quorum, leases) | implemented (M3) |
+| Distributed cluster (placement, heal, mTLS) | in progress (M3) |
 | IAM / STS / policies | planned (M4) |
 | Free web console | planned (M5) |
 | Lifecycle / encryption / object lock | planned (M6) |
