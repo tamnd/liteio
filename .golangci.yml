@@ -16,8 +16,13 @@ linters:
   settings:
     revive:
       rules:
+        # Keep the exported-symbol doc-comment checks, but allow the
+        # domain-standard names (ObjectLayer, ObjectInfo, StorageAPI) that
+        # intentionally repeat their package name, matching the design spec.
         - name: exported
           disabled: false
+          arguments:
+            - disableStutteringCheck
 
   exclusions:
     generated: lax
