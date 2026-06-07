@@ -200,3 +200,21 @@ type uploadXML struct {
 	StorageClass string        `xml:"StorageClass"`
 	Initiated    string        `xml:"Initiated"`
 }
+
+// --- copy ------------------------------------------------------------------
+
+// CopyObjectResult (PUT /bucket/key with x-amz-copy-source).
+type copyObjectResult struct {
+	XMLName      xml.Name `xml:"CopyObjectResult"`
+	XMLNS        string   `xml:"xmlns,attr"`
+	LastModified string   `xml:"LastModified"`
+	ETag         string   `xml:"ETag"`
+}
+
+// CopyPartResult (PUT /bucket/key?partNumber=N&uploadId=... with x-amz-copy-source).
+type copyPartResult struct {
+	XMLName      xml.Name `xml:"CopyPartResult"`
+	XMLNS        string   `xml:"xmlns,attr"`
+	LastModified string   `xml:"LastModified"`
+	ETag         string   `xml:"ETag"`
+}

@@ -55,6 +55,8 @@ var (
 	errInvalidPartOrder        = APIError{"InvalidPartOrder", "The list of parts was not in ascending order. Parts must be ordered by part number.", http.StatusBadRequest}
 	errEntityTooSmall          = APIError{"EntityTooSmall", "Your proposed upload is smaller than the minimum allowed object size. Each part but the last must be at least 5 MiB.", http.StatusBadRequest}
 	errInvalidRequest          = APIError{"InvalidRequest", "Invalid Request.", http.StatusBadRequest}
+	errInvalidCopySource       = APIError{"InvalidArgument", "Copy Source must mention the source bucket and key: sourcebucket/sourcekey.", http.StatusBadRequest}
+	errInvalidCopyDest         = APIError{"InvalidRequest", "This copy request is illegal because it is trying to copy an object to itself without changing the object's metadata, storage class, website redirect location or encryption attributes.", http.StatusBadRequest}
 	errMalformedXML            = APIError{"MalformedXML", "The XML you provided was not well-formed or did not validate against our published schema.", http.StatusBadRequest}
 	errMissingContentLength    = APIError{"MissingContentLength", "You must provide the Content-Length HTTP header.", http.StatusBadRequest}
 	errBadDigest               = APIError{"BadDigest", "The Content-MD5 you specified did not match what we received.", http.StatusBadRequest}
