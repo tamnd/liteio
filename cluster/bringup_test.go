@@ -12,11 +12,14 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/tamnd/liteio/cluster"
+	"github.com/tamnd/liteio/cluster/lock"
 	"github.com/tamnd/liteio/cluster/rpc"
 	"github.com/tamnd/liteio/object"
+	"github.com/tamnd/liteio/storage"
 	"github.com/tamnd/liteio/storage/local"
 	"github.com/tamnd/liteio/storage/remote"
 )
@@ -104,7 +107,7 @@ func TestBringUpSingleNodeLocal(t *testing.T) {
 		t.Fatalf("ParsePattern: %v", err)
 	}
 	id := newDeploymentID(t)
-	sp, layouts, err := cluster.BringUp(id, []cluster.PoolSpec{{Endpoints: eps, Parity: 2}}, cluster.Opener{})
+	sp, layouts, err := cluster.BringUp(id, []cluster.PoolSpec{{Endpoints: eps, Parity: 2}}, cluster.Opener{}, cluster.Membership{})
 	if err != nil {
 		t.Fatalf("BringUp: %v", err)
 	}
@@ -147,7 +150,7 @@ func TestBringUpOverRemoteDrives(t *testing.T) {
 		Local:  func(cluster.Endpoint) bool { return false },
 		Client: http.DefaultClient,
 	}
-	sp, layouts, err := cluster.BringUp(id, []cluster.PoolSpec{{Endpoints: eps, Parity: 2}}, opener)
+	sp, layouts, err := cluster.BringUp(id, []cluster.PoolSpec{{Endpoints: eps, Parity: 2}}, opener, cluster.Membership{})
 	if err != nil {
 		t.Fatalf("BringUp over remote drives: %v", err)
 	}
@@ -155,6 +158,96 @@ func TestBringUpOverRemoteDrives(t *testing.T) {
 		t.Fatalf("set has %d drives, want 6", len(layouts[0].Sets[0]))
 	}
 	roundTrip(t, sp)
+}
+
+// TestBringUpWithDistributedLock wires a real lock quorum into the object layer
+// through Membership and proves the namespace lock is taken across it: a burst of
+// concurrent writers to one key leaves a clean, untorn object, which can only
+// hold if every PutObject acquired the cluster lock (over RPC to the peer
+// lockers) before committing.
+func TestBringUpWithDistributedLock(t *testing.T) {
+	// Three lock authorities; node 0 is us, nodes 1 and 2 are peers we reach over
+	// RPC. Each node's Server also serves a throwaway drive (NewServer needs one).
+	var bases []string
+	var self *lock.LocalLocker
+	for i := range 3 {
+		srv, locker := serveLockNode(t)
+		hs := httptest.NewServer(srv.Handler())
+		t.Cleanup(hs.Close)
+		if i == 0 {
+			self = locker
+		} else {
+			bases = append(bases, hs.URL)
+		}
+	}
+	quorum := cluster.LockQuorum(self, bases, http.DefaultClient)
+
+	base := t.TempDir()
+	eps, err := cluster.ParsePattern([]string{filepath.Join(base, "disk{1...4}")})
+	if err != nil {
+		t.Fatalf("ParsePattern: %v", err)
+	}
+	id := newDeploymentID(t)
+	sp, _, err := cluster.BringUp(id, []cluster.PoolSpec{{Endpoints: eps, Parity: 1}},
+		cluster.Opener{}, cluster.Membership{NodeID: "node0", Lockers: quorum})
+	if err != nil {
+		t.Fatalf("BringUp: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := sp.MakeBucket(ctx, "b", object.MakeBucketOptions{}); err != nil {
+		t.Fatalf("MakeBucket: %v", err)
+	}
+	const writers = 12
+	bodies := make([][]byte, writers)
+	var wg sync.WaitGroup
+	for w := range writers {
+		body := bytes.Repeat([]byte{byte('A' + w)}, 70*1024)
+		bodies[w] = body
+		wg.Go(func() {
+			_, _ = sp.PutObject(ctx, "b", "hot",
+				object.NewPutReader(bytes.NewReader(body), int64(len(body))), object.ObjectOptions{})
+		})
+	}
+	wg.Wait()
+
+	got := getOne(t, sp)
+	for _, body := range bodies {
+		if bytes.Equal(got, body) {
+			return // the final object is exactly one writer's payload, never a mix
+		}
+	}
+	t.Fatalf("final object (%d bytes, first byte %q) matched no single writer's body", len(got), got[0])
+}
+
+// serveLockNode is a node whose Server exists mainly for its lock endpoint; it
+// carries one throwaway drive because NewServer needs a valid drive config.
+func serveLockNode(t *testing.T) (*cluster.Server, *lock.LocalLocker) {
+	t.Helper()
+	d, err := local.New(t.TempDir())
+	if err != nil {
+		t.Fatalf("local: %v", err)
+	}
+	locker := lock.NewLocalLocker("n")
+	srv, err := cluster.NewServer(map[string]storage.StorageAPI{"/d0": d}, locker)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	return srv, locker
+}
+
+func getOne(t *testing.T, sp *object.ServerPools) []byte {
+	t.Helper()
+	r, err := sp.GetObject(context.Background(), "b", "hot", object.ObjectOptions{})
+	if err != nil {
+		t.Fatalf("GetObject: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+	got, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	return got
 }
 
 // serveNode stands up one node: a parent mux hosting n local drives, each under

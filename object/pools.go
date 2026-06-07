@@ -48,8 +48,28 @@ type ServerPools struct {
 
 var _ ObjectLayer = (*ServerPools)(nil)
 
+// Option configures a ServerPools at construction. Options are applied after the
+// single-node defaults, so an option overrides them.
+type Option func(*ServerPools)
+
+// WithLockers installs the distributed namespace-lock quorum: nodeID is this
+// node's identity as the owner of the locks it takes, and lockers is the set of
+// lock authorities (this node's own plus its peers) that a namespace lock spans.
+// Without this option a ServerPools uses one in-process LocalLocker, which is the
+// correct single-node behavior. A nil or empty lockers leaves the default in
+// place.
+func WithLockers(nodeID string, lockers []lock.Locker) Option {
+	return func(sp *ServerPools) {
+		if len(lockers) == 0 {
+			return
+		}
+		sp.nodeID = nodeID
+		sp.nsLockers = lockers
+	}
+}
+
 // NewServerPools builds the object layer from a per-pool, per-set drive layout.
-func NewServerPools(deploymentID [16]byte, pools []PoolConfig) (*ServerPools, error) {
+func NewServerPools(deploymentID [16]byte, pools []PoolConfig, opts ...Option) (*ServerPools, error) {
 	if len(pools) == 0 {
 		return nil, ErrInvalidArgument
 	}
@@ -72,6 +92,9 @@ func NewServerPools(deploymentID [16]byte, pools []PoolConfig) (*ServerPools, er
 			p.sets = append(p.sets, set)
 		}
 		sp.pools = append(sp.pools, p)
+	}
+	for _, opt := range opts {
+		opt(sp)
 	}
 	return sp, nil
 }
