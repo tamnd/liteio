@@ -112,6 +112,29 @@ aws --endpoint-url http://localhost:9000 s3 ls s3://photos
 > chunks are decoded and individually signature-verified, so the CLI, presigned
 > URLs, `boto3`, and the `s3api` verbs above all work against the current build.
 
+### Running a distributed node
+
+Set `--cluster-address` to run a node in distributed mode. Each node serves the
+drives it owns and its lock authority on that address, interprets `--drives` as
+endpoint patterns (which may name remote hosts), and takes namespace locks across
+a quorum built from `--peers`. A drive endpoint is local to the node when its host
+matches `--node-host`.
+
+```sh
+liteio \
+  --address :9000 \
+  --cluster-address :9100 \
+  --node-host node1.lan \
+  --drives 'https://node{1...4}.lan:9100/mnt/disk{1...8}' \
+  --peers https://node2.lan:9100,https://node3.lan:9100,https://node4.lan:9100 \
+  --parity 4 \
+  --cluster-cert node1.crt --cluster-key node1.key --cluster-ca cluster-ca.crt \
+  --cluster-server-name liteio-cluster
+```
+
+The same command, with its own `--node-host`, runs on every node. Omit the
+`--cluster-*` certificate flags to use plain HTTP on a trusted network.
+
 ## Compatibility matrix
 
 Compatibility is tracked honestly, including deliberate divergences. This table is
@@ -143,7 +166,8 @@ the living source of truth and is updated as milestones land.
 | Cluster bring-up (format.json lifecycle, drive assembly over RPC) | implemented (M3) |
 | Node membership server (serves drives + lock endpoint, mTLS) | implemented (M3) |
 | Distributed namespace locking (object layer over a lock quorum) | implemented (M3) |
-| Distributed cluster (node command, reactive heal) | in progress (M3) |
+| Distributed node command (serves drives + lock quorum, mTLS) | implemented (M3) |
+| Distributed cluster (reactive heal, cross-node cache coherence) | in progress (M3) |
 | IAM / STS / policies | planned (M4) |
 | Free web console | planned (M5) |
 | Lifecycle / encryption / object lock | planned (M6) |
