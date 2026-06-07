@@ -259,6 +259,10 @@ type ObjectLayer interface {
 	// listing
 	ListObjectsV2(ctx context.Context, bucket, prefix, token, startAfter, delim string, maxKeys int, fetchOwner bool) (ListObjectsV2Info, error)
 
+	// copy
+	CopyObject(ctx context.Context, srcBucket, srcObject, dstBucket, dstObject string, srcInfo ObjectInfo, opts ObjectOptions) (ObjectInfo, error)
+	CopyObjectPart(ctx context.Context, srcBucket, srcObject, dstBucket, dstObject, uploadID string, partID int, srcInfo ObjectInfo, rng *HTTPRangeSpec, opts ObjectOptions) (PartInfo, error)
+
 	// multipart upload
 	NewMultipartUpload(ctx context.Context, bucket, object string, opts ObjectOptions) (uploadID string, err error)
 	PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, r *PutReader, opts ObjectOptions) (PartInfo, error)

@@ -166,8 +166,17 @@ func (s *Server) serveObject(w http.ResponseWriter, r *http.Request, requestID, 
 	uploadID := q.Get("uploadId")
 	switch r.Method {
 	case http.MethodPut:
+		copySource := r.Header.Get(copySourceHeader)
 		if uploadID != "" && q.Has("partNumber") {
+			if copySource != "" {
+				s.uploadPartCopy(w, r, requestID, bucket, object, uploadID, copySource)
+				return
+			}
 			s.uploadPart(w, r, requestID, bucket, object, uploadID)
+			return
+		}
+		if copySource != "" {
+			s.copyObject(w, r, requestID, bucket, object, copySource)
 			return
 		}
 		s.putObject(w, r, requestID, bucket, object)

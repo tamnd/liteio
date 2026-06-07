@@ -133,6 +133,7 @@ the living source of truth and is updated as milestones land.
 | Versioning + delete markers (engine) | implemented |
 | Versioning surfaced over S3 | planned (M2) |
 | Multipart upload (Create/Upload/Complete/Abort/List) | implemented |
+| CopyObject + UploadPartCopy (`x-amz-copy-source`) | implemented |
 | Distributed multi-node cluster | planned (M3) |
 | IAM / STS / policies | planned (M4) |
 | Free web console | planned (M5) |
