@@ -179,12 +179,18 @@ func (s *erasureSet) deleteBucket(ctx context.Context, bucket string, force bool
 func (s *erasureSet) versioningPath() string { return path.Join(reserved, "versioning") }
 
 func (s *erasureSet) setVersioning(ctx context.Context, bucket string, enabled bool) error {
-	val := []byte("disabled")
+	state := "disabled"
 	if enabled {
-		val = []byte("enabled")
+		state = "enabled"
 	}
+	return s.setVersioningState(ctx, bucket, state)
+}
+
+// setVersioningState persists the bucket's versioning state ("enabled",
+// "suspended", or "disabled") on every drive in the set.
+func (s *erasureSet) setVersioningState(ctx context.Context, bucket, state string) error {
 	res := fanOut(ctx, len(s.drives), func(ctx context.Context, i int) (struct{}, error) {
-		return struct{}{}, s.drives[i].WriteMeta(ctx, bucket, s.versioningPath(), val)
+		return struct{}{}, s.drives[i].WriteMeta(ctx, bucket, s.versioningPath(), []byte(state))
 	})
 	if countOK(res) < s.writeQuorum() {
 		return ErrWriteQuorum
@@ -192,7 +198,9 @@ func (s *erasureSet) setVersioning(ctx context.Context, bucket string, enabled b
 	return nil
 }
 
-func (s *erasureSet) versioned(ctx context.Context, bucket string) bool {
+// versioningState returns the stored state: "enabled", "suspended", or "" when
+// versioning was never configured on the bucket.
+func (s *erasureSet) versioningState(ctx context.Context, bucket string) string {
 	for _, d := range s.drives {
 		if !d.IsOnline() {
 			continue
@@ -201,9 +209,19 @@ func (s *erasureSet) versioned(ctx context.Context, bucket string) bool {
 		if err != nil {
 			continue
 		}
-		return string(data) == "enabled"
+		switch string(data) {
+		case "enabled":
+			return "enabled"
+		case "suspended":
+			return "suspended"
+		}
+		return ""
 	}
-	return false
+	return ""
+}
+
+func (s *erasureSet) versioned(ctx context.Context, bucket string) bool {
+	return s.versioningState(ctx, bucket) == "enabled"
 }
 
 // --- write path ----------------------------------------------------------

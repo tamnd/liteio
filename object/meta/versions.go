@@ -2,7 +2,10 @@
 
 package meta
 
-import "time"
+import (
+	"sort"
+	"time"
+)
 
 // This file holds the version-list operations that obj.meta supports: finding the
 // latest or a specific version, adding object versions and delete markers, removing
@@ -114,6 +117,45 @@ func keyOf(fi FileInfo) versionKey {
 		k.modNano = fi.ModTime.UnixNano()
 	}
 	return k
+}
+
+// QuorumVersions reconciles per-drive metadata into the read-quorum list of every
+// version of one object, newest-first, for ListObjectVersions.
+//
+// metas[i] is drive i's full version list (nil if drive i did not respond). A
+// version is included only if at least quorum drives carry it; the representative
+// entry is the one whose drive recorded it (any drive, since they agree on the
+// logical version). The returned list is ordered newest-first by mod time and has
+// IsLatest recomputed so the first entry is the current version.
+func QuorumVersions(metas [][]FileInfo, quorum int) []FileInfo {
+	counts := map[versionKey]int{}
+	repr := map[versionKey]FileInfo{}
+	for _, vers := range metas {
+		for _, fi := range vers {
+			k := keyOf(fi)
+			counts[k]++
+			if _, seen := repr[k]; !seen {
+				repr[k] = fi
+			}
+		}
+	}
+
+	out := make([]FileInfo, 0, len(counts))
+	for k, c := range counts {
+		if c >= quorum {
+			out = append(out, repr[k])
+		}
+	}
+	// Newest-first; a stable tie-break on version id keeps the order deterministic
+	// when two versions share a mod time.
+	sort.SliceStable(out, func(i, j int) bool {
+		if !out[i].ModTime.Equal(out[j].ModTime) {
+			return out[i].ModTime.After(out[j].ModTime)
+		}
+		return out[i].VersionID > out[j].VersionID
+	})
+	markLatest(out)
+	return out
 }
 
 // QuorumVersion reconciles per-drive metadata into the read-quorum truth for the

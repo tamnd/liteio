@@ -133,6 +133,8 @@ func (s *Server) serveBucket(w http.ResponseWriter, r *http.Request, requestID, 
 			s.getBucketLocation(w, r, requestID, bucket)
 		case q.Has("versioning"):
 			s.getBucketVersioning(w, r, requestID, bucket)
+		case q.Has("versions"):
+			s.listObjectVersions(w, r, requestID, bucket)
 		case q.Has("uploads"):
 			s.listMultipartUploads(w, r, requestID, bucket)
 		default:
