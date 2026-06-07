@@ -131,6 +131,12 @@ type PoolSpec struct {
 type Membership struct {
 	NodeID  string
 	Lockers []lock.Locker
+
+	// CacheNotifier, when set, is installed as the object layer's cross-node
+	// metacache notifier (see CacheBroadcaster), so a write here invalidates the
+	// listing caches peers hold. A zero Membership leaves the layer making no
+	// cross-node notifications, correct for a single-node deployment.
+	CacheNotifier func(bucket, key string)
 }
 
 // BringUp computes each pool's layout, opens every drive through opener
@@ -176,6 +182,9 @@ func BringUp(deploymentID [16]byte, specs []PoolSpec, opener Opener, m Membershi
 	var opts []object.Option
 	if len(m.Lockers) > 0 {
 		opts = append(opts, object.WithLockers(m.NodeID, m.Lockers))
+	}
+	if m.CacheNotifier != nil {
+		opts = append(opts, object.WithCacheNotifier(m.CacheNotifier))
 	}
 	sp, err := object.NewServerPools(deploymentID, configs, opts...)
 	if err != nil {

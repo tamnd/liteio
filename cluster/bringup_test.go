@@ -229,7 +229,7 @@ func serveLockNode(t *testing.T) (*cluster.Server, *lock.LocalLocker) {
 		t.Fatalf("local: %v", err)
 	}
 	locker := lock.NewLocalLocker("n")
-	srv, err := cluster.NewServer(map[string]storage.StorageAPI{"/d0": d}, locker)
+	srv, err := cluster.NewServer(map[string]storage.StorageAPI{"/d0": d}, locker, nil)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}

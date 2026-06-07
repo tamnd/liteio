@@ -44,7 +44,7 @@ func newServerNode(t *testing.T, n int, lockerName string) (*cluster.Server, *lo
 		drives["/drive"+itoa(d)] = l
 	}
 	locker := lock.NewLocalLocker(lockerName)
-	srv, err := cluster.NewServer(drives, locker)
+	srv, err := cluster.NewServer(drives, locker, nil)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -111,15 +111,15 @@ func TestServerServesLockEndpoint(t *testing.T) {
 
 func TestNewServerRejectsBadConfig(t *testing.T) {
 	l, _ := local.New(t.TempDir())
-	if _, err := cluster.NewServer(map[string]storage.StorageAPI{"/d": l}, nil); err == nil {
+	if _, err := cluster.NewServer(map[string]storage.StorageAPI{"/d": l}, nil, nil); err == nil {
 		t.Fatal("NewServer must require a lock authority")
 	}
 	bad := map[string]storage.StorageAPI{cluster.LockPath: l}
-	if _, err := cluster.NewServer(bad, lock.NewLocalLocker("n")); err == nil {
+	if _, err := cluster.NewServer(bad, lock.NewLocalLocker("n"), nil); err == nil {
 		t.Fatal("a drive path that collides with the lock endpoint must be rejected")
 	}
 	empty := map[string]storage.StorageAPI{"": l}
-	if _, err := cluster.NewServer(empty, lock.NewLocalLocker("n")); err == nil {
+	if _, err := cluster.NewServer(empty, lock.NewLocalLocker("n"), nil); err == nil {
 		t.Fatal("an empty drive path must be rejected")
 	}
 }

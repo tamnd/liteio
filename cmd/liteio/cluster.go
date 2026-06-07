@@ -107,20 +107,25 @@ func buildCluster(cfg config) (object.ObjectLayer, *cluster.Server, error) {
 	// The self locker must be the one the inter-node server serves below, so the
 	// quorum this node builds and the quorum peers reach through it agree.
 	self := lock.NewLocalLocker(cfg.nodeHost)
-	quorum := cluster.LockQuorum(self, splitNonEmpty(cfg.peers), client)
+	peers := splitNonEmpty(cfg.peers)
+	quorum := cluster.LockQuorum(self, peers, client)
 
 	opener := cluster.Opener{Local: isLocal, Client: client}
 	sp, _, err := cluster.BringUp(
 		deploymentSalt(cfg.deploymentID),
 		[]cluster.PoolSpec{{Endpoints: endpoints, Parity: cfg.parity}},
 		opener,
-		cluster.Membership{NodeID: cfg.nodeHost, Lockers: quorum},
+		cluster.Membership{
+			NodeID:        cfg.nodeHost,
+			Lockers:       quorum,
+			CacheNotifier: cluster.CacheBroadcaster(peers, client),
+		},
 	)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	srv, err := cluster.NewServer(localDrives, self)
+	srv, err := cluster.NewServer(localDrives, self, sp)
 	if err != nil {
 		return nil, nil, fmt.Errorf("liteio: build node server: %w", err)
 	}
