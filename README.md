@@ -140,7 +140,8 @@ the living source of truth and is updated as milestones land.
 | Namespace locking on mutating operations | implemented (M3) |
 | Mutual TLS for inter-node transport | implemented (M3) |
 | Cluster topology (endpoint patterns, set layout, format.json) | implemented (M3) |
-| Distributed cluster (heal, membership, bring-up) | in progress (M3) |
+| Cluster bring-up (format.json lifecycle, drive assembly over RPC) | implemented (M3) |
+| Distributed cluster (membership server, heal) | in progress (M3) |
 | IAM / STS / policies | planned (M4) |
 | Free web console | planned (M5) |
 | Lifecycle / encryption / object lock | planned (M6) |
