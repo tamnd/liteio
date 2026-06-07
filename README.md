@@ -129,6 +129,7 @@ the living source of truth and is updated as milestones land.
 | Conditional GET/HEAD (If-Match / If-None-Match / If-\[Un\]Modified-Since) | implemented |
 | Bucket lifecycle (Create/Delete/List/Head/Location) | implemented |
 | ListObjectsV2 (prefix / delimiter / pagination) | implemented |
+| Listing metacache (cached namespace walk) | implemented |
 | Batch delete (`DeleteObjects`) | implemented |
 | Versioning + delete markers (engine) | implemented |
 | Versioning over S3 (`?versioning`) + ListObjectVersions | implemented |

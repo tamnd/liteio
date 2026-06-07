@@ -23,19 +23,20 @@ func depID(b byte) [16]byte {
 }
 
 // newLayer builds a single-set ServerPools backed by n local drives in temp dirs.
-func newLayer(t *testing.T, n, parity int) *ServerPools {
-	t.Helper()
+// It takes testing.TB so both tests and benchmarks can use it.
+func newLayer(tb testing.TB, n, parity int) *ServerPools {
+	tb.Helper()
 	drives := make([]storage.StorageAPI, n)
 	for i := range n {
-		d, err := local.New(t.TempDir())
+		d, err := local.New(tb.TempDir())
 		if err != nil {
-			t.Fatalf("local.New: %v", err)
+			tb.Fatalf("local.New: %v", err)
 		}
 		drives[i] = d
 	}
 	sp, err := NewSingleSet(depID(7), drives, parity)
 	if err != nil {
-		t.Fatalf("NewSingleSet: %v", err)
+		tb.Fatalf("NewSingleSet: %v", err)
 	}
 	return sp
 }
