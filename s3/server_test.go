@@ -187,6 +187,57 @@ func TestObjectPutGetHeadDelete(t *testing.T) {
 	mustStatus(t, h.do(http.MethodGet, "/data/big.txt", nil, nil), http.StatusNotFound)
 }
 
+// doStreaming signs payload as an aws-chunked streaming upload and sends it,
+// exercising the server's chunk-verifying decode path end to end.
+func (h *harness) doStreaming(path string, payload []byte, chunkSize int) result {
+	h.t.Helper()
+	req, err := http.NewRequest(http.MethodPut, h.srv.URL+path, nil)
+	if err != nil {
+		h.t.Fatalf("new request: %v", err)
+	}
+	framed := sign.SignStreaming(req, testCreds, "us-east-1", payload, chunkSize, time.Now().UTC())
+	req.Body = io.NopCloser(bytes.NewReader(framed))
+	req.ContentLength = int64(len(framed))
+	resp, err := h.srv.Client().Do(req)
+	if err != nil {
+		h.t.Fatalf("do streaming %s: %v", path, err)
+	}
+	defer resp.Body.Close()
+	rb, err := io.ReadAll(resp.Body)
+	if err != nil {
+		h.t.Fatalf("read body: %v", err)
+	}
+	return result{status: resp.StatusCode, header: resp.Header, body: rb}
+}
+
+func TestStreamingPutGet(t *testing.T) {
+	h := newHarness(t)
+	mustStatus(t, h.do(http.MethodPut, "/stream", nil, nil), http.StatusOK)
+
+	// Multi-chunk out-of-line object: ~80 KiB across 16 KiB chunks plus a tail.
+	payload := bytes.Repeat([]byte("liteio-streaming-payload-"), 3300)
+	put := h.doStreaming("/stream/big.bin", payload, 16<<10)
+	mustStatus(t, put, http.StatusOK)
+	if put.header.Get("ETag") == "" {
+		t.Fatal("missing ETag on streaming PUT")
+	}
+
+	get := h.do(http.MethodGet, "/stream/big.bin", nil, nil)
+	mustStatus(t, get, http.StatusOK)
+	if !bytes.Equal(get.body, payload) {
+		t.Fatalf("streaming round-trip mismatch: %d vs %d bytes", len(get.body), len(payload))
+	}
+
+	// Small single-chunk streaming upload (inline).
+	small := []byte("tiny streamed body")
+	mustStatus(t, h.doStreaming("/stream/tiny.txt", small, 0), http.StatusOK)
+	got := h.do(http.MethodGet, "/stream/tiny.txt", nil, nil)
+	mustStatus(t, got, http.StatusOK)
+	if !bytes.Equal(got.body, small) {
+		t.Fatalf("small streaming mismatch: %q", got.body)
+	}
+}
+
 func TestPutToMissingBucket(t *testing.T) {
 	h := newHarness(t)
 	resp := h.do(http.MethodPut, "/ghost/key", []byte("x"), nil)

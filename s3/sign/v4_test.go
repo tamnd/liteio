@@ -3,8 +3,10 @@
 package sign
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -48,12 +50,12 @@ func TestHeaderSignRoundTrip(t *testing.T) {
 	r.Header.Set("Content-Type", "text/plain")
 	SignHeader(r, testCred, "us-east-1", bodyHash(body), fixedTime)
 
-	ak, err := Verify(r, testStore, fixedTime)
+	vr, err := Verify(r, testStore, fixedTime)
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
-	if ak != testCred.AccessKey {
-		t.Fatalf("access key = %q, want %q", ak, testCred.AccessKey)
+	if vr.AccessKey != testCred.AccessKey {
+		t.Fatalf("access key = %q, want %q", vr.AccessKey, testCred.AccessKey)
 	}
 }
 
@@ -131,6 +133,84 @@ func TestPresignExpired(t *testing.T) {
 	r.Host = "s3.local"
 	if _, err := Verify(r, testStore, fixedTime.Add(2*time.Minute)); err == nil || err.Code != "AccessDenied" {
 		t.Fatalf("expected AccessDenied (expired), got %v", err)
+	}
+}
+
+func TestStreamingChunkedRoundTrip(t *testing.T) {
+	// A payload large enough to span several 64-byte chunks plus a partial tail.
+	payload := bytes.Repeat([]byte("liteio-streaming-"), 40)
+	r := httptest.NewRequest(http.MethodPut, "http://s3.local/bucket/stream.bin", nil)
+	r.Host = "s3.local"
+	framed := SignStreaming(r, testCred, "us-east-1", payload, 64, fixedTime)
+	r.Body = io.NopCloser(bytes.NewReader(framed))
+
+	vr, err := Verify(r, testStore, fixedTime)
+	if err != nil {
+		t.Fatalf("verify streaming: %v", err)
+	}
+	if !vr.IsStreaming() {
+		t.Fatal("expected a streaming request")
+	}
+	got, rerr := io.ReadAll(vr.DecodeBody(r.Body))
+	if rerr != nil {
+		t.Fatalf("decode body: %v", rerr)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("decoded %d bytes, want %d", len(got), len(payload))
+	}
+}
+
+func TestStreamingSingleChunk(t *testing.T) {
+	payload := []byte("small body")
+	r := httptest.NewRequest(http.MethodPut, "http://s3.local/b/k", nil)
+	r.Host = "s3.local"
+	framed := SignStreaming(r, testCred, "us-east-1", payload, 0, fixedTime)
+	r.Body = io.NopCloser(bytes.NewReader(framed))
+	vr, err := Verify(r, testStore, fixedTime)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	got, _ := io.ReadAll(vr.DecodeBody(r.Body))
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("got %q, want %q", got, payload)
+	}
+}
+
+func TestStreamingEmptyBody(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPut, "http://s3.local/b/k", nil)
+	r.Host = "s3.local"
+	framed := SignStreaming(r, testCred, "us-east-1", nil, 0, fixedTime)
+	r.Body = io.NopCloser(bytes.NewReader(framed))
+	vr, err := Verify(r, testStore, fixedTime)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	got, rerr := io.ReadAll(vr.DecodeBody(r.Body))
+	if rerr != nil {
+		t.Fatalf("decode empty: %v", rerr)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected empty body, got %d bytes", len(got))
+	}
+}
+
+func TestStreamingTamperedChunkRejected(t *testing.T) {
+	payload := bytes.Repeat([]byte("abcdefgh"), 20)
+	r := httptest.NewRequest(http.MethodPut, "http://s3.local/b/k", nil)
+	r.Host = "s3.local"
+	framed := SignStreaming(r, testCred, "us-east-1", payload, 64, fixedTime)
+
+	// Corrupt a byte inside the first chunk's data region (past the header line).
+	idx := bytes.IndexByte(framed, '\n') + 5
+	framed[idx] ^= 0xff
+	r.Body = io.NopCloser(bytes.NewReader(framed))
+
+	vr, err := Verify(r, testStore, fixedTime)
+	if err != nil {
+		t.Fatalf("verify (header still valid): %v", err)
+	}
+	if _, rerr := io.ReadAll(vr.DecodeBody(r.Body)); rerr == nil {
+		t.Fatal("expected a chunk signature error on tampered data")
 	}
 }
 
