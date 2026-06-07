@@ -118,3 +118,85 @@ type deleteErrorXML struct {
 	Code    string `xml:"Code"`
 	Message string `xml:"Message"`
 }
+
+// --- multipart upload ------------------------------------------------------
+
+// InitiateMultipartUploadResult (POST /bucket/key?uploads).
+type initiateMultipartUploadResult struct {
+	XMLName  xml.Name `xml:"InitiateMultipartUploadResult"`
+	XMLNS    string   `xml:"xmlns,attr"`
+	Bucket   string   `xml:"Bucket"`
+	Key      string   `xml:"Key"`
+	UploadID string   `xml:"UploadId"`
+}
+
+// CompleteMultipartUpload request body (POST /bucket/key?uploadId=...).
+type completeMultipartUpload struct {
+	XMLName xml.Name          `xml:"CompleteMultipartUpload"`
+	Parts   []completePartXML `xml:"Part"`
+}
+
+type completePartXML struct {
+	PartNumber int    `xml:"PartNumber"`
+	ETag       string `xml:"ETag"`
+}
+
+// CompleteMultipartUploadResult response body.
+type completeMultipartUploadResult struct {
+	XMLName  xml.Name `xml:"CompleteMultipartUploadResult"`
+	XMLNS    string   `xml:"xmlns,attr"`
+	Location string   `xml:"Location"`
+	Bucket   string   `xml:"Bucket"`
+	Key      string   `xml:"Key"`
+	ETag     string   `xml:"ETag"`
+}
+
+// ListPartsResult (GET /bucket/key?uploadId=...).
+type listPartsResult struct {
+	XMLName              xml.Name      `xml:"ListPartsResult"`
+	XMLNS                string        `xml:"xmlns,attr"`
+	Bucket               string        `xml:"Bucket"`
+	Key                  string        `xml:"Key"`
+	UploadID             string        `xml:"UploadId"`
+	PartNumberMarker     int           `xml:"PartNumberMarker"`
+	NextPartNumberMarker int           `xml:"NextPartNumberMarker"`
+	MaxParts             int           `xml:"MaxParts"`
+	IsTruncated          bool          `xml:"IsTruncated"`
+	StorageClass         string        `xml:"StorageClass"`
+	Initiator            canonicalUser `xml:"Initiator"`
+	Owner                canonicalUser `xml:"Owner"`
+	Parts                []partXML     `xml:"Part"`
+}
+
+type partXML struct {
+	PartNumber   int    `xml:"PartNumber"`
+	LastModified string `xml:"LastModified"`
+	ETag         string `xml:"ETag"`
+	Size         int64  `xml:"Size"`
+}
+
+// ListMultipartUploadsResult (GET /bucket?uploads).
+type listMultipartUploadsResult struct {
+	XMLName            xml.Name       `xml:"ListMultipartUploadsResult"`
+	XMLNS              string         `xml:"xmlns,attr"`
+	Bucket             string         `xml:"Bucket"`
+	KeyMarker          string         `xml:"KeyMarker"`
+	UploadIDMarker     string         `xml:"UploadIdMarker"`
+	NextKeyMarker      string         `xml:"NextKeyMarker"`
+	NextUploadIDMarker string         `xml:"NextUploadIdMarker"`
+	Delimiter          string         `xml:"Delimiter,omitempty"`
+	Prefix             string         `xml:"Prefix"`
+	MaxUploads         int            `xml:"MaxUploads"`
+	IsTruncated        bool           `xml:"IsTruncated"`
+	Uploads            []uploadXML    `xml:"Upload"`
+	CommonPrefixes     []commonPrefix `xml:"CommonPrefixes"`
+}
+
+type uploadXML struct {
+	Key          string        `xml:"Key"`
+	UploadID     string        `xml:"UploadId"`
+	Initiator    canonicalUser `xml:"Initiator"`
+	Owner        canonicalUser `xml:"Owner"`
+	StorageClass string        `xml:"StorageClass"`
+	Initiated    string        `xml:"Initiated"`
+}
