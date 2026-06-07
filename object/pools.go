@@ -50,7 +50,19 @@ type ServerPools struct {
 	// repairs the laggards. It is created in the constructor so enqueues are always
 	// counted, but only drained once StartHealing runs.
 	mrf *mrf
+
+	// cacheNotify, when set, is called best-effort after a local mutation so peers
+	// can keep their listing caches coherent. It is nil for a single-node
+	// deployment (no peers to tell) and installed by WithCacheNotifier in a
+	// cluster. A non-empty key was added by a write; an empty key means the bucket
+	// was invalidated by a delete.
+	cacheNotify CacheNotifier
 }
+
+// CacheNotifier carries a node's local metacache events to its peers so listings
+// served anywhere reflect a write made anywhere. A non-empty key was added; an
+// empty key invalidates the whole bucket.
+type CacheNotifier func(bucket, key string)
 
 var _ ObjectLayer = (*ServerPools)(nil)
 
@@ -71,6 +83,19 @@ func WithLockers(nodeID string, lockers []lock.Locker) Option {
 		}
 		sp.nodeID = nodeID
 		sp.nsLockers = lockers
+	}
+}
+
+// WithCacheNotifier installs the notifier the layer calls after a local mutation
+// so peers can keep their listing caches coherent. Without it the layer makes no
+// cross-node notifications, which is correct for a single-node deployment. A nil
+// notifier leaves the default (no notification) in place.
+func WithCacheNotifier(n CacheNotifier) Option {
+	return func(sp *ServerPools) {
+		if n == nil {
+			return
+		}
+		sp.cacheNotify = n
 	}
 }
 
@@ -136,6 +161,29 @@ func (sp *ServerPools) MRFStats() MRFStats {
 // the version there.
 func (sp *ServerPools) healTask(ctx context.Context, t healTask) error {
 	return sp.route(t.object).healObject(ctx, t.bucket, t.object, t.versionID)
+}
+
+// notifyCache tells the peers, if any, about a local metacache event. It is
+// best-effort: the notifier never blocks the caller and a lost notification is
+// covered by the metacache TTL, so the write path is never slowed or failed by
+// cross-node coherence.
+func (sp *ServerPools) notifyCache(bucket, key string) {
+	if sp.cacheNotify != nil {
+		sp.cacheNotify(bucket, key)
+	}
+}
+
+// ApplyRemoteCache applies a peer's metacache event to this node so a listing
+// served here reflects a write made there. A non-empty key is recorded as
+// present (keeping a warm cache correct without a re-walk); an empty key
+// invalidates the bucket so the next list re-reads the tree. It is the inbound
+// half of WithCacheNotifier and a no-op for any bucket this node has not cached.
+func (sp *ServerPools) ApplyRemoteCache(bucket, key string) {
+	if key == "" {
+		sp.cache.invalidate(bucket)
+		return
+	}
+	sp.cache.add(bucket, key)
 }
 
 // NewSingleSet is a convenience constructor for one pool of one set, the common
@@ -211,6 +259,7 @@ func (sp *ServerPools) DeleteBucket(ctx context.Context, bucket string, opts Del
 		}
 	}
 	sp.cache.invalidate(bucket)
+	sp.notifyCache(bucket, "")
 	return firstErr
 }
 
@@ -226,6 +275,7 @@ func (sp *ServerPools) PutObject(ctx context.Context, bucket, object string, r *
 	oi, err := sp.route(object).putObject(ctx, bucket, object, r, opts)
 	if err == nil {
 		sp.cache.add(bucket, object)
+		sp.notifyCache(bucket, object)
 	}
 	return oi, err
 }
@@ -250,6 +300,7 @@ func (sp *ServerPools) DeleteObject(ctx context.Context, bucket, object string, 
 	oi, err := sp.route(object).deleteObject(ctx, bucket, object, opts)
 	if err == nil {
 		sp.cache.invalidate(bucket)
+		sp.notifyCache(bucket, "")
 	}
 	return oi, err
 }
@@ -279,6 +330,7 @@ func (sp *ServerPools) DeleteObjects(ctx context.Context, bucket string, objs []
 		}
 	}
 	sp.cache.invalidate(bucket)
+	sp.notifyCache(bucket, "")
 	return deleted, errs
 }
 
@@ -304,6 +356,7 @@ func (sp *ServerPools) CompleteMultipartUpload(ctx context.Context, bucket, obje
 	oi, err := sp.route(object).completeMultipartUpload(ctx, bucket, object, uploadID, parts, opts)
 	if err == nil {
 		sp.cache.add(bucket, object)
+		sp.notifyCache(bucket, object)
 	}
 	return oi, err
 }

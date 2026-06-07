@@ -36,8 +36,12 @@ type Server struct {
 // (the Path of the Endpoint that names it, for example "/mnt/disk1") to the
 // StorageAPI serving it; locker is the node's lock authority (a
 // lock.LocalLocker), served at LockPath. Drive paths must be non-empty, distinct,
-// and different from LockPath.
-func NewServer(drives map[string]storage.StorageAPI, locker lock.Locker) (*Server, error) {
+// and different from the LockPath and CachePath reserved paths.
+//
+// cache, when non-nil, is served at CachePath so peers can keep this node's
+// listing cache coherent with writes made elsewhere; pass nil for a deployment
+// that does not propagate cache events.
+func NewServer(drives map[string]storage.StorageAPI, locker lock.Locker, cache CacheSink) (*Server, error) {
 	if locker == nil {
 		return nil, fmt.Errorf("cluster: node server needs a lock authority")
 	}
@@ -46,8 +50,8 @@ func NewServer(drives map[string]storage.StorageAPI, locker lock.Locker) (*Serve
 		if path == "" || path == "/" {
 			return nil, fmt.Errorf("cluster: drive endpoint path %q is not usable", path)
 		}
-		if path == LockPath {
-			return nil, fmt.Errorf("cluster: drive endpoint path %q collides with the lock endpoint", path)
+		if path == LockPath || path == CachePath {
+			return nil, fmt.Errorf("cluster: drive endpoint path %q collides with a reserved endpoint", path)
 		}
 		dmux := rpc.NewMux()
 		remote.Register(dmux, drive)
@@ -59,6 +63,12 @@ func NewServer(drives map[string]storage.StorageAPI, locker lock.Locker) (*Serve
 	lmux := rpc.NewMux()
 	lock.Register(lmux, locker)
 	mux.Handle(LockPath+"/", http.StripPrefix(LockPath, lmux))
+
+	if cache != nil {
+		cmux := rpc.NewMux()
+		RegisterCache(cmux, cache)
+		mux.Handle(CachePath+"/", http.StripPrefix(CachePath, cmux))
+	}
 
 	return &Server{mux: mux}, nil
 }
