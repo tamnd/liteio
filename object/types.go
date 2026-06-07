@@ -145,6 +145,18 @@ type ListObjectsV2Info struct {
 	NextContinuationToken string
 }
 
+// ListObjectVersionsInfo is the result of a ListObjectVersions call. Objects holds
+// versions and delete markers interleaved, ordered by key ascending and, within a
+// key, newest-first (IsLatest and DeleteMarker on each entry tell the front door
+// which XML element to render).
+type ListObjectVersionsInfo struct {
+	Objects             []ObjectInfo
+	Prefixes            []string // common (delimiter-rolled) prefixes
+	IsTruncated         bool
+	NextKeyMarker       string
+	NextVersionIDMarker string
+}
+
 // MultipartUpload identifies one in-progress multipart upload in a listing.
 type MultipartUpload struct {
 	Bucket    string
@@ -211,6 +223,15 @@ type DeletedObject struct {
 	DeleteMarkerVersionID string
 }
 
+// VersioningConfig is a bucket's versioning state as the S3 VersioningConfiguration
+// subresource models it. Enabled keeps every version; Suspended retains existing
+// versions but writes the unversioned "null" version going forward; the zero value
+// (neither set) means versioning was never configured.
+type VersioningConfig struct {
+	Enabled   bool
+	Suspended bool
+}
+
 // MakeBucketOptions carries bucket-creation inputs (initial versioning state).
 type MakeBucketOptions struct{ VersionedDefault bool }
 
@@ -258,6 +279,11 @@ type ObjectLayer interface {
 
 	// listing
 	ListObjectsV2(ctx context.Context, bucket, prefix, token, startAfter, delim string, maxKeys int, fetchOwner bool) (ListObjectsV2Info, error)
+	ListObjectVersions(ctx context.Context, bucket, prefix, keyMarker, versionIDMarker, delim string, maxKeys int) (ListObjectVersionsInfo, error)
+
+	// versioning
+	SetBucketVersioning(ctx context.Context, bucket string, cfg VersioningConfig) error
+	GetBucketVersioning(ctx context.Context, bucket string) (VersioningConfig, error)
 
 	// copy
 	CopyObject(ctx context.Context, srcBucket, srcObject, dstBucket, dstObject string, srcInfo ObjectInfo, opts ObjectOptions) (ObjectInfo, error)

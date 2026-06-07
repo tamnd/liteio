@@ -131,7 +131,7 @@ the living source of truth and is updated as milestones land.
 | ListObjectsV2 (prefix / delimiter / pagination) | implemented |
 | Batch delete (`DeleteObjects`) | implemented |
 | Versioning + delete markers (engine) | implemented |
-| Versioning surfaced over S3 | planned (M2) |
+| Versioning over S3 (`?versioning`) + ListObjectVersions | implemented |
 | Multipart upload (Create/Upload/Complete/Abort/List) | implemented |
 | CopyObject + UploadPartCopy (`x-amz-copy-source`) | implemented |
 | Distributed multi-node cluster | planned (M3) |

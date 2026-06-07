@@ -84,13 +84,19 @@ func (s *Server) getBucketLocation(w http.ResponseWriter, r *http.Request, reque
 }
 
 func (s *Server) getBucketVersioning(w http.ResponseWriter, r *http.Request, requestID, bucket string) {
-	if _, err := s.layer.GetBucketInfo(r.Context(), bucket); err != nil {
+	cfg, err := s.layer.GetBucketVersioning(r.Context(), bucket)
+	if err != nil {
 		s.fail(w, requestID, r.URL.Path, err)
 		return
 	}
-	// Versioning state is not yet surfaced through ObjectLayer; report the
-	// unconfigured state (empty body) until the bucket-config API lands.
-	writeXML(w, requestID, http.StatusOK, versioningConfiguration{})
+	out := versioningConfiguration{XMLNS: s3XMLNS}
+	switch {
+	case cfg.Enabled:
+		out.Status = "Enabled"
+	case cfg.Suspended:
+		out.Status = "Suspended"
+	}
+	writeXML(w, requestID, http.StatusOK, out)
 }
 
 func (s *Server) putBucketVersioning(w http.ResponseWriter, r *http.Request, requestID, bucket string) {
@@ -103,9 +109,11 @@ func (s *Server) putBucketVersioning(w http.ResponseWriter, r *http.Request, req
 		writeError(w, requestID, r.URL.Path, errMalformedXML)
 		return
 	}
-	// MakeBucket already created the bucket; enabling versioning end-to-end waits
-	// on the bucket-config subsystem. Accept and ack the well-formed request.
-	if _, err := s.layer.GetBucketInfo(r.Context(), bucket); err != nil {
+	vc := object.VersioningConfig{
+		Enabled:   cfg.Status == "Enabled",
+		Suspended: cfg.Status == "Suspended",
+	}
+	if err := s.layer.SetBucketVersioning(r.Context(), bucket, vc); err != nil {
 		s.fail(w, requestID, r.URL.Path, err)
 		return
 	}
@@ -157,6 +165,69 @@ func (s *Server) listObjectsV2(w http.ResponseWriter, r *http.Request, requestID
 		out.CommonPrefixes = append(out.CommonPrefixes, commonPrefix{Prefix: p})
 	}
 	out.KeyCount = len(out.Contents) + len(out.CommonPrefixes)
+	writeXML(w, requestID, http.StatusOK, out)
+}
+
+// listObjectVersions handles GET /bucket?versions: it lists every version and
+// delete marker of the objects in a bucket, newest-first within each key.
+func (s *Server) listObjectVersions(w http.ResponseWriter, r *http.Request, requestID, bucket string) {
+	q := r.URL.Query()
+	maxKeys := 1000
+	if v := q.Get("max-keys"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			maxKeys = n
+		}
+	}
+	prefix := q.Get("prefix")
+	delim := q.Get("delimiter")
+	keyMarker := q.Get("key-marker")
+	versionIDMarker := q.Get("version-id-marker")
+
+	res, err := s.layer.ListObjectVersions(r.Context(), bucket, prefix, keyMarker, versionIDMarker, delim, maxKeys)
+	if err != nil {
+		s.fail(w, requestID, r.URL.Path, err)
+		return
+	}
+
+	out := listVersionsResult{
+		XMLNS:               s3XMLNS,
+		Name:                bucket,
+		Prefix:              prefix,
+		KeyMarker:           keyMarker,
+		VersionIDMarker:     versionIDMarker,
+		NextKeyMarker:       res.NextKeyMarker,
+		NextVersionIDMarker: res.NextVersionIDMarker,
+		MaxKeys:             maxKeys,
+		Delimiter:           delim,
+		IsTruncated:         res.IsTruncated,
+	}
+	for _, o := range res.Objects {
+		versionID := o.VersionID
+		if versionID == "" {
+			versionID = "null"
+		}
+		if o.DeleteMarker {
+			out.DeleteMarkers = append(out.DeleteMarkers, deleteMarkerXML{
+				Key:          o.Name,
+				VersionID:    versionID,
+				IsLatest:     o.IsLatest,
+				LastModified: amzTime(o.ModTime),
+			})
+			continue
+		}
+		out.Versions = append(out.Versions, versionEntryXML{
+			Key:          o.Name,
+			VersionID:    versionID,
+			IsLatest:     o.IsLatest,
+			LastModified: amzTime(o.ModTime),
+			ETag:         quoteETag(o.ETag),
+			Size:         o.Size,
+			StorageClass: "STANDARD",
+		})
+	}
+	for _, p := range res.Prefixes {
+		out.CommonPrefixes = append(out.CommonPrefixes, commonPrefix{Prefix: p})
+	}
 	writeXML(w, requestID, http.StatusOK, out)
 }
 

@@ -70,6 +70,44 @@ type commonPrefix struct {
 	Prefix string `xml:"Prefix"`
 }
 
+// --- ListVersionsResult (GET /bucket?versions) ----------------------------
+
+type listVersionsResult struct {
+	XMLName             xml.Name          `xml:"ListVersionsResult"`
+	XMLNS               string            `xml:"xmlns,attr"`
+	Name                string            `xml:"Name"`
+	Prefix              string            `xml:"Prefix"`
+	KeyMarker           string            `xml:"KeyMarker"`
+	VersionIDMarker     string            `xml:"VersionIdMarker"`
+	NextKeyMarker       string            `xml:"NextKeyMarker,omitempty"`
+	NextVersionIDMarker string            `xml:"NextVersionIdMarker,omitempty"`
+	MaxKeys             int               `xml:"MaxKeys"`
+	Delimiter           string            `xml:"Delimiter,omitempty"`
+	IsTruncated         bool              `xml:"IsTruncated"`
+	Versions            []versionEntryXML `xml:"Version"`
+	DeleteMarkers       []deleteMarkerXML `xml:"DeleteMarker"`
+	CommonPrefixes      []commonPrefix    `xml:"CommonPrefixes"`
+}
+
+type versionEntryXML struct {
+	Key          string         `xml:"Key"`
+	VersionID    string         `xml:"VersionId"`
+	IsLatest     bool           `xml:"IsLatest"`
+	LastModified string         `xml:"LastModified"`
+	ETag         string         `xml:"ETag"`
+	Size         int64          `xml:"Size"`
+	StorageClass string         `xml:"StorageClass"`
+	Owner        *canonicalUser `xml:"Owner,omitempty"`
+}
+
+type deleteMarkerXML struct {
+	Key          string         `xml:"Key"`
+	VersionID    string         `xml:"VersionId"`
+	IsLatest     bool           `xml:"IsLatest"`
+	LastModified string         `xml:"LastModified"`
+	Owner        *canonicalUser `xml:"Owner,omitempty"`
+}
+
 // --- LocationConstraint (GET /bucket?location) ----------------------------
 
 type locationConstraint struct {
