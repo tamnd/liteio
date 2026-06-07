@@ -141,7 +141,8 @@ the living source of truth and is updated as milestones land.
 | Mutual TLS for inter-node transport | implemented (M3) |
 | Cluster topology (endpoint patterns, set layout, format.json) | implemented (M3) |
 | Cluster bring-up (format.json lifecycle, drive assembly over RPC) | implemented (M3) |
-| Distributed cluster (membership server, heal) | in progress (M3) |
+| Node membership server (serves drives + lock endpoint, mTLS) | implemented (M3) |
+| Distributed cluster (lock-quorum wiring, heal) | in progress (M3) |
 | IAM / STS / policies | planned (M4) |
 | Free web console | planned (M5) |
 | Lifecycle / encryption / object lock | planned (M6) |
