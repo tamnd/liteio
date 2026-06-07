@@ -86,3 +86,24 @@ func BenchmarkS3GetObject(b *testing.B) {
 		resp.Body.Close()
 	}
 }
+
+func BenchmarkS3GetObjectRange(b *testing.B) {
+	h := newBenchHarness(b)
+	client := h.srv.Client()
+	h.send(b, h.signedRequest(b, http.MethodPut, "/bench", nil))
+	payload := bytes.Repeat([]byte("x"), 1<<20)
+	h.send(b, h.signedRequest(b, http.MethodPut, "/bench/obj", payload))
+	const window = 64 << 10
+	b.SetBytes(window)
+	b.ResetTimer()
+	for b.Loop() {
+		req := h.signedRequest(b, http.MethodGet, "/bench/obj", nil)
+		req.Header.Set("Range", "bytes=0-65535")
+		resp, err := client.Do(req)
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+}

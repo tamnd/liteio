@@ -182,14 +182,43 @@ func (s *Server) putObject(w http.ResponseWriter, r *http.Request, requestID, bu
 
 func (s *Server) getObject(w http.ResponseWriter, r *http.Request, requestID, bucket, object2 string) {
 	opts := object.ObjectOptions{VersionID: r.URL.Query().Get("versionId")}
+
+	// Fetch metadata first so conditional headers and the Range can be resolved
+	// before any bytes are read, exactly as S3 evaluates a GET.
+	info, err := s.layer.GetObjectInfo(r.Context(), bucket, object2, opts)
+	if err != nil {
+		s.fail(w, requestID, r.URL.Path, err)
+		return
+	}
+	if s.checkPreconditions(w, r, requestID, info) {
+		return
+	}
+
+	rng := parseRange(r.Header.Get("Range"))
+	start, length, rerr := rng.GetOffsetLength(info.Size)
+	if rerr != nil {
+		// An unsatisfiable range gets 416 with the object's full size echoed back.
+		w.Header().Set("Content-Range", "bytes */"+strconv.FormatInt(info.Size, 10))
+		writeError(w, requestID, r.URL.Path, errInvalidRange)
+		return
+	}
+
+	opts.Range = rng
 	gr, err := s.layer.GetObject(r.Context(), bucket, object2, opts)
 	if err != nil {
 		s.fail(w, requestID, r.URL.Path, err)
 		return
 	}
 	defer func() { _ = gr.Close() }()
-	writeObjectHeaders(w, gr.ObjectInfo)
-	w.WriteHeader(http.StatusOK)
+
+	writeObjectHeaders(w, info)
+	if rng != nil {
+		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
+		w.Header().Set("Content-Range", contentRange(start, length, info.Size))
+		w.WriteHeader(http.StatusPartialContent)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
 	_, _ = io.Copy(w, gr)
 }
 
@@ -200,7 +229,25 @@ func (s *Server) headObject(w http.ResponseWriter, r *http.Request, requestID, b
 		w.WriteHeader(toAPIError(err).HTTPStatus)
 		return
 	}
+	if s.checkPreconditions(w, r, requestID, info) {
+		return
+	}
+
+	rng := parseRange(r.Header.Get("Range"))
+	start, length, rerr := rng.GetOffsetLength(info.Size)
+	if rerr != nil {
+		w.Header().Set("Content-Range", "bytes */"+strconv.FormatInt(info.Size, 10))
+		w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+		return
+	}
+
 	writeObjectHeaders(w, info)
+	if rng != nil {
+		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
+		w.Header().Set("Content-Range", contentRange(start, length, info.Size))
+		w.WriteHeader(http.StatusPartialContent)
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -266,6 +313,13 @@ func quoteETag(etag string) string {
 		return etag
 	}
 	return "\"" + etag + "\""
+}
+
+// contentRange formats a Content-Range header value for a satisfied byte range:
+// "bytes <start>-<end>/<total>".
+func contentRange(start, length, total int64) string {
+	return "bytes " + strconv.FormatInt(start, 10) + "-" +
+		strconv.FormatInt(start+length-1, 10) + "/" + strconv.FormatInt(total, 10)
 }
 
 // writeObjectHeaders stamps the standard object response headers shared by GET

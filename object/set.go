@@ -424,6 +424,16 @@ func (s *erasureSet) getObject(ctx context.Context, bucket, object string, opts 
 		return nil, ErrReadQuorum
 	}
 
+	// A ranged read yields only the requested window; ObjectInfo still reports
+	// the full object so the front door can emit Content-Range against the total.
+	if opts.Range != nil {
+		start, length, rerr := opts.Range.GetOffsetLength(rep.Size)
+		if rerr != nil {
+			return nil, rerr
+		}
+		data = data[start : start+length]
+	}
+
 	return &GetObjectReader{
 		ObjectInfo: toObjectInfo(bucket, object, rep),
 		r:          bytes.NewReader(data),

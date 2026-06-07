@@ -384,6 +384,74 @@ func TestMultiPoolRouting(t *testing.T) {
 	}
 }
 
+func TestHTTPRangeSpecGetOffsetLength(t *testing.T) {
+	const size = 100
+	cases := []struct {
+		name              string
+		spec              *HTTPRangeSpec
+		wantStart, wantLn int64
+		wantErr           bool
+	}{
+		{"nil covers whole object", nil, 0, size, false},
+		{"closed range", &HTTPRangeSpec{Start: 10, End: 19}, 10, 10, false},
+		{"open range to end", &HTTPRangeSpec{Start: 90, End: -1}, 90, 10, false},
+		{"end past size clamps", &HTTPRangeSpec{Start: 95, End: 1000}, 95, 5, false},
+		{"single byte", &HTTPRangeSpec{Start: 0, End: 0}, 0, 1, false},
+		{"suffix", &HTTPRangeSpec{IsSuffix: true, Start: 20}, 80, 20, false},
+		{"suffix larger than size clamps", &HTTPRangeSpec{IsSuffix: true, Start: 1000}, 0, size, false},
+		{"start past end of object", &HTTPRangeSpec{Start: 100, End: -1}, 0, 0, true},
+		{"inverted bounds", &HTTPRangeSpec{Start: 50, End: 40}, 0, 0, true},
+		{"empty suffix", &HTTPRangeSpec{IsSuffix: true, Start: 0}, 0, 0, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			start, ln, err := c.spec.GetOffsetLength(size)
+			if c.wantErr {
+				if !errors.Is(err, ErrInvalidRange) {
+					t.Fatalf("err = %v, want ErrInvalidRange", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if start != c.wantStart || ln != c.wantLn {
+				t.Fatalf("offset/length = %d/%d, want %d/%d", start, ln, c.wantStart, c.wantLn)
+			}
+		})
+	}
+}
+
+func TestGetObjectRange(t *testing.T) {
+	sp := newLayer(t, 6, 2)
+	mustMakeBucket(t, sp, "b")
+	// An out-of-line object so the range slices erasure-decoded bytes.
+	body := make([]byte, 50<<10)
+	for i := range body {
+		body[i] = byte(i)
+	}
+	if _, err := sp.PutObject(context.Background(), "b", "k",
+		NewPutReader(bytes.NewReader(body), int64(len(body))), ObjectOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Mid-object closed range.
+	got := getBytes(t, sp, "b", "k", ObjectOptions{Range: &HTTPRangeSpec{Start: 1000, End: 1999}})
+	if !bytes.Equal(got, body[1000:2000]) {
+		t.Fatalf("closed range mismatch: %d bytes", len(got))
+	}
+	// Suffix range.
+	got = getBytes(t, sp, "b", "k", ObjectOptions{Range: &HTTPRangeSpec{IsSuffix: true, Start: 256}})
+	if !bytes.Equal(got, body[len(body)-256:]) {
+		t.Fatalf("suffix range mismatch: %d bytes", len(got))
+	}
+	// Unsatisfiable range surfaces ErrInvalidRange.
+	_, err := sp.GetObject(context.Background(), "b", "k", ObjectOptions{Range: &HTTPRangeSpec{Start: 1 << 30, End: -1}})
+	if !errors.Is(err, ErrInvalidRange) {
+		t.Fatalf("err = %v, want ErrInvalidRange", err)
+	}
+}
+
 // --- helpers and fault-injection drives ----------------------------------
 
 func mustMakeBucket(t *testing.T, sp *ServerPools, name string) {
