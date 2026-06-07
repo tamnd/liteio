@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"sync"
+	"time"
 )
 
 // The identity store holds liteio's identities and turns an access key into an
@@ -29,6 +30,8 @@ var (
 	// ErrUnknownPolicy is returned when attaching a policy name the store does not
 	// know (neither canned nor added).
 	ErrUnknownPolicy = errors.New("auth: unknown policy")
+	// ErrExpired is returned when an STS session credential has passed its TTL.
+	ErrExpired = errors.New("auth: session expired")
 )
 
 // User is a long-lived credential with attached policies and group memberships
@@ -69,7 +72,9 @@ type Store struct {
 	users    map[string]*User           // by access key
 	groups   map[string]*Group          // by name
 	svc      map[string]*ServiceAccount // by access key
+	sessions map[string]*sessionRecord  // STS sessions by access key
 	policies map[string]Policy          // by name; seeded with the canned set
+	now      func() time.Time           // clock, injectable for tests
 }
 
 // NewStore builds a store with the given root credential and the canned policies
@@ -81,7 +86,9 @@ func NewStore(rootAccessKey, rootSecretKey string) *Store {
 		users:    make(map[string]*User),
 		groups:   make(map[string]*Group),
 		svc:      make(map[string]*ServiceAccount),
+		sessions: make(map[string]*sessionRecord),
 		policies: make(map[string]Policy),
+		now:      time.Now,
 	}
 	for _, name := range CannedPolicyNames() {
 		p, _ := CannedPolicy(name)
@@ -99,7 +106,10 @@ func (s *Store) keyTaken(accessKey string) bool {
 	if _, ok := s.users[accessKey]; ok {
 		return true
 	}
-	_, ok := s.svc[accessKey]
+	if _, ok := s.svc[accessKey]; ok {
+		return true
+	}
+	_, ok := s.sessions[accessKey]
 	return ok
 }
 
@@ -341,6 +351,9 @@ func (s *Store) Secret(accessKey string) (string, bool) {
 	if sa, ok := s.svc[accessKey]; ok {
 		return sa.SecretKey, true
 	}
+	if sess, ok := s.sessions[accessKey]; ok {
+		return sess.secretKey, true
+	}
 	return "", false
 }
 
@@ -369,6 +382,20 @@ func (s *Store) userPolicies(u *User) []Policy {
 	return out
 }
 
+// principalAllows reports whether the identity named by a parent access key (root
+// or a user) allows the request, ignoring any narrowing layer. It is the base of
+// the intersection a service account or STS session restricts. The caller must
+// hold the lock. ok is false when the parent access key names no such principal.
+func (s *Store) principalAllows(parentKey string, req Request) (allowed, ok bool) {
+	if parentKey == s.rootKey {
+		return true, true
+	}
+	if u, found := s.users[parentKey]; found {
+		return Evaluate(s.userPolicies(u), req), true
+	}
+	return false, false
+}
+
 // IsAllowed decides a request for the identity behind an access key, applying the
 // right composition for each kind:
 //
@@ -377,6 +404,9 @@ func (s *Store) userPolicies(u *User) []Policy {
 //   - A service account is allowed when its parent's set allows AND, if it carries
 //     an inline policy, that policy also allows — the intersection that makes an
 //     inline policy able only to narrow, never widen, the parent's rights.
+//   - An STS session is allowed when the identity it was assumed from allows AND,
+//     if it carries a session policy, that policy also allows; an expired session
+//     is denied with ErrExpired.
 //
 // An unknown access key is denied (false) with ErrNotFound, so a caller can tell
 // "no such identity" from a known identity that was simply not granted the action.
@@ -390,17 +420,33 @@ func (s *Store) IsAllowed(accessKey string, req Request) (bool, error) {
 		return Evaluate(s.userPolicies(u), req), nil
 	}
 	if sa, ok := s.svc[accessKey]; ok {
-		parent, ok := s.users[sa.ParentUser]
+		base, ok := s.principalAllows(sa.ParentUser, req)
 		if !ok {
 			// The parent was deleted without the child; deny rather than grant on a
 			// dangling reference. DeleteUser removes children, so this is defensive.
 			return false, fmt.Errorf("%w: parent user %q", ErrNotFound, sa.ParentUser)
 		}
-		if !Evaluate(s.userPolicies(parent), req) {
+		if !base {
 			return false, nil
 		}
 		if sa.Inline != nil {
 			return Evaluate([]Policy{*sa.Inline}, req), nil
+		}
+		return true, nil
+	}
+	if sess, ok := s.sessions[accessKey]; ok {
+		if !s.now().Before(sess.expiry) {
+			return false, fmt.Errorf("%w: access key %q", ErrExpired, accessKey)
+		}
+		base, ok := s.principalAllows(sess.parent, req)
+		if !ok {
+			return false, fmt.Errorf("%w: session principal %q", ErrNotFound, sess.parent)
+		}
+		if !base {
+			return false, nil
+		}
+		if sess.policy != nil {
+			return Evaluate([]Policy{*sess.policy}, req), nil
 		}
 		return true, nil
 	}
