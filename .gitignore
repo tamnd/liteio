@@ -1,0 +1,19 @@
+# Binaries
+/liteio
+/dist/
+*.exe
+*.test
+*.out
+
+# Coverage
+coverage.out
+coverage.html
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Local scratch drives used by tests/dev
+/.liteio-data/
+*.liteio.tmp

@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: Apache-2.0
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - unconvert
+    - bodyclose
+    - revive
+
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: false
+
+  exclusions:
+    generated: lax
+    rules:
+      # Table-driven tests and benchmarks legitimately ignore some errors.
+      - path: _test\.go
+        linters:
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt
