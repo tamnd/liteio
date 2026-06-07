@@ -7,6 +7,7 @@ import (
 	"errors"
 	"sort"
 
+	"github.com/tamnd/liteio/cluster/lock"
 	"github.com/tamnd/liteio/object/placement"
 	"github.com/tamnd/liteio/storage"
 )
@@ -35,6 +36,14 @@ type ServerPools struct {
 	deploymentID [16]byte
 	pools        []*pool
 	cache        *metacache
+
+	// nodeID identifies this node as the owner of the namespace locks it takes;
+	// nsLockers is the lock-server quorum guarding the namespace. A single-node
+	// deployment holds one in-process LocalLocker; a clustered deployment replaces
+	// this with the cluster's lock peers (reached over cluster/rpc) behind the same
+	// Locker contract.
+	nodeID    string
+	nsLockers []lock.Locker
 }
 
 var _ ObjectLayer = (*ServerPools)(nil)
@@ -44,7 +53,12 @@ func NewServerPools(deploymentID [16]byte, pools []PoolConfig) (*ServerPools, er
 	if len(pools) == 0 {
 		return nil, ErrInvalidArgument
 	}
-	sp := &ServerPools{deploymentID: deploymentID, cache: newMetacache()}
+	sp := &ServerPools{
+		deploymentID: deploymentID,
+		cache:        newMetacache(),
+		nodeID:       "local",
+		nsLockers:    []lock.Locker{lock.NewLocalLocker("local")},
+	}
 	for _, pc := range pools {
 		if len(pc.Sets) == 0 {
 			return nil, ErrInvalidArgument
@@ -142,6 +156,11 @@ func (sp *ServerPools) DeleteBucket(ctx context.Context, bucket string, opts Del
 
 // PutObject implements ObjectLayer: it routes the object to its set and writes it.
 func (sp *ServerPools) PutObject(ctx context.Context, bucket, object string, r *PutReader, opts ObjectOptions) (ObjectInfo, error) {
+	unlock, err := sp.lockObject(ctx, bucket, object)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	defer unlock()
 	oi, err := sp.route(object).putObject(ctx, bucket, object, r, opts)
 	if err == nil {
 		sp.cache.add(bucket, object)
@@ -161,6 +180,11 @@ func (sp *ServerPools) GetObjectInfo(ctx context.Context, bucket, object string,
 
 // DeleteObject implements ObjectLayer.
 func (sp *ServerPools) DeleteObject(ctx context.Context, bucket, object string, opts ObjectOptions) (ObjectInfo, error) {
+	unlock, err := sp.lockObject(ctx, bucket, object)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	defer unlock()
 	oi, err := sp.route(object).deleteObject(ctx, bucket, object, opts)
 	if err == nil {
 		sp.cache.invalidate(bucket)
@@ -173,7 +197,13 @@ func (sp *ServerPools) DeleteObjects(ctx context.Context, bucket string, objs []
 	deleted := make([]DeletedObject, len(objs))
 	errs := make([]error, len(objs))
 	for i, o := range objs {
+		unlock, err := sp.lockObject(ctx, bucket, o.Name)
+		if err != nil {
+			errs[i] = err
+			continue
+		}
 		info, err := sp.route(o.Name).deleteObject(ctx, bucket, o.Name, ObjectOptions{VersionID: o.VersionID})
+		unlock()
 		errs[i] = err
 		if err == nil {
 			deleted[i] = DeletedObject{
@@ -204,6 +234,11 @@ func (sp *ServerPools) PutObjectPart(ctx context.Context, bucket, object, upload
 
 // CompleteMultipartUpload implements ObjectLayer.
 func (sp *ServerPools) CompleteMultipartUpload(ctx context.Context, bucket, object, uploadID string, parts []CompletePart, opts ObjectOptions) (ObjectInfo, error) {
+	unlock, err := sp.lockObject(ctx, bucket, object)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	defer unlock()
 	oi, err := sp.route(object).completeMultipartUpload(ctx, bucket, object, uploadID, parts, opts)
 	if err == nil {
 		sp.cache.add(bucket, object)

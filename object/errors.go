@@ -36,4 +36,7 @@ var (
 	ErrInvalidArgument = errors.New("object: invalid argument")
 	// ErrNotImplemented marks an operation deferred to a later milestone.
 	ErrNotImplemented = errors.New("object: not implemented")
+	// ErrOperationTimedOut means the namespace lock for a mutating operation
+	// could not be acquired before the request context was done.
+	ErrOperationTimedOut = errors.New("object: operation timed out acquiring the namespace lock")
 )

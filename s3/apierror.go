@@ -102,6 +102,9 @@ func toAPIError(err error) APIError {
 	case errors.Is(err, object.ErrReadQuorum), errors.Is(err, object.ErrWriteQuorum):
 		// A set without quorum is asking the client to back off and retry.
 		return errSlowDown
+	case errors.Is(err, object.ErrOperationTimedOut):
+		// The namespace lock was contended past the deadline; ask the client to retry.
+		return errSlowDown
 	default:
 		if ae, ok := errors.AsType[APIError](err); ok {
 			return ae
