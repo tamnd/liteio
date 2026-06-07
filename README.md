@@ -169,7 +169,8 @@ the living source of truth and is updated as milestones land.
 | Distributed node command (serves drives + lock quorum, mTLS) | implemented (M3) |
 | Reactive heal of under-replicated objects + MRF queue | implemented (M3) |
 | Cross-node metacache coherence (listings fresh on every node) | implemented (M3) |
-| IAM / STS / policies | planned (M4) |
+| PBAC policy engine (AWS IAM syntax, deny-by-default, canned policies) | implemented (M4) |
+| Identities / STS / bucket policies / admin API | planned (M4) |
 | Free web console | planned (M5) |
 | Lifecycle / encryption / object lock | planned (M6) |
 | Replication / tiering / events | planned (M7) |
