@@ -104,4 +104,7 @@ var (
 	// ErrNoSuchBucketReplication is returned when no replication configuration
 	// has been set for a bucket.
 	ErrNoSuchBucketReplication = errors.New("object: no such bucket replication configuration")
+	// ErrNoSuchBucketCORS is returned by GetBucketCORS when the bucket has no
+	// CORS configuration set.
+	ErrNoSuchBucketCORS = errors.New("object: no such CORS configuration")
 )
