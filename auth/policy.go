@@ -59,6 +59,12 @@ type Statement struct {
 	// It is set by ParseBucketPolicy (identity policies leave it nil and never
 	// consult it); being unexported, json ignores it.
 	parsedPrincipal *principal
+
+	// parsedCondition holds the Condition block decoded into evaluable form. It
+	// is set by ParsePolicy (so it covers identity and bucket policies alike); a
+	// statement with no conditions leaves it nil. Being unexported, json ignores
+	// it.
+	parsedCondition conditionSet
 }
 
 // stringSet is a JSON field that AWS allows as either a single string or an array
@@ -111,6 +117,11 @@ func ParsePolicy(doc []byte) (Policy, error) {
 		if len(st.Resources) > 0 && len(st.NotResources) > 0 {
 			return Policy{}, fmt.Errorf("auth: statement %d sets both Resource and NotResource", i)
 		}
+		cond, err := parseConditions(st.Condition)
+		if err != nil {
+			return Policy{}, fmt.Errorf("auth: statement %d: %w", i, err)
+		}
+		st.parsedCondition = cond
 	}
 	return p, nil
 }
