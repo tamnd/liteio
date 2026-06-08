@@ -71,14 +71,15 @@ var _ IAM = (*auth.Store)(nil)
 // Server is the admin REST API HTTP handler. It authenticates and authorizes every
 // request, then dispatches to the IAM handlers.
 type Server struct {
-	iam     IAM
-	creds   auth.CredentialStore // SigV4 secret lookup
-	info    InfoSource           // deployment topology for info/health (nil omits those routes)
-	tiers   TierLayer            // tier config management (nil omits those routes)
-	version string               // build version reported by the info endpoint
-	now     func() time.Time     // clock seam for signature skew (tests inject)
-	mux     *http.ServeMux
-	actions map[string]string // ServeMux pattern -> required admin action
+	iam        IAM
+	creds      auth.CredentialStore // SigV4 secret lookup
+	info       InfoSource           // deployment topology for info/health (nil omits those routes)
+	tiers      TierLayer            // tier config management (nil omits those routes)
+	rebalancer RebalanceLayer       // rebalance/decommission (nil omits those routes)
+	version    string               // build version reported by the info endpoint
+	now        func() time.Time     // clock seam for signature skew (tests inject)
+	mux        *http.ServeMux
+	actions    map[string]string // ServeMux pattern -> required admin action
 }
 
 // Option configures a Server.
@@ -156,6 +157,15 @@ func (s *Server) routes() *http.ServeMux {
 		route{"GET " + apiPrefix + "/tiers/{name}", "admin:GetTier", s.getTier},
 		route{"PUT " + apiPrefix + "/tiers/{name}", "admin:SetTier", s.putTier},
 		route{"DELETE " + apiPrefix + "/tiers/{name}", "admin:DeleteTier", s.deleteTier},
+	)
+	// Rebalance and decommission routes; handlers return 501 when rebalancer is nil.
+	rs = append(rs,
+		route{"POST " + apiPrefix + "/rebalance", "admin:Rebalance", s.startRebalance},
+		route{"GET " + apiPrefix + "/rebalance", "admin:Rebalance", s.getRebalanceStatus},
+		route{"DELETE " + apiPrefix + "/rebalance", "admin:Rebalance", s.stopRebalance},
+		route{"POST " + apiPrefix + "/decommission", "admin:Decommission", s.startDecommission},
+		route{"GET " + apiPrefix + "/decommission", "admin:Decommission", s.getDecommissionStatus},
+		route{"DELETE " + apiPrefix + "/decommission", "admin:Decommission", s.stopDecommission},
 	)
 	mux := http.NewServeMux()
 	s.actions = make(map[string]string, len(rs))
