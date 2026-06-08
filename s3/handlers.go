@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/tamnd/liteio/auth"
 	"github.com/tamnd/liteio/object"
 )
 
@@ -118,6 +119,63 @@ func (s *Server) putBucketVersioning(w http.ResponseWriter, r *http.Request, req
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// --- bucket policy ----------------------------------------------------------
+
+// maxBucketPolicySize caps the policy document a client may upload, matching the
+// 20 KB limit S3 enforces and bounding the read before it touches storage.
+const maxBucketPolicySize = 20 * 1024
+
+func (s *Server) getBucketPolicy(w http.ResponseWriter, r *http.Request, requestID, bucket string) {
+	doc, err := s.layer.GetBucketPolicy(r.Context(), bucket)
+	if err != nil {
+		s.fail(w, requestID, r.URL.Path, err)
+		return
+	}
+	// The stored document is the canonical JSON the client gave us; return it
+	// verbatim rather than re-marshaling, so round-tripping is byte-exact.
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(doc)
+}
+
+func (s *Server) putBucketPolicy(w http.ResponseWriter, r *http.Request, requestID, bucket string) {
+	// A bucket policy can only be set on a bucket that exists; check first so a
+	// policy for a missing bucket is NoSuchBucket, not a confusing parse error.
+	if _, err := s.layer.GetBucketInfo(r.Context(), bucket); err != nil {
+		s.fail(w, requestID, r.URL.Path, err)
+		return
+	}
+	doc, err := io.ReadAll(io.LimitReader(r.Body, maxBucketPolicySize+1))
+	if err != nil {
+		writeError(w, requestID, r.URL.Path, errInvalidRequest)
+		return
+	}
+	if len(doc) > maxBucketPolicySize {
+		writeError(w, requestID, r.URL.Path, errMalformedPolicy)
+		return
+	}
+	// Validate the document and its Principal clause before persisting; an invalid
+	// policy never reaches storage. The parsed form is discarded — the object layer
+	// stores the bytes — but parsing is what rejects a malformed policy.
+	if _, err := auth.ParseBucketPolicy(doc); err != nil {
+		writeError(w, requestID, r.URL.Path, errMalformedPolicy)
+		return
+	}
+	if err := s.layer.SetBucketPolicy(r.Context(), bucket, doc); err != nil {
+		s.fail(w, requestID, r.URL.Path, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) deleteBucketPolicy(w http.ResponseWriter, r *http.Request, requestID, bucket string) {
+	if err := s.layer.DeleteBucketPolicy(r.Context(), bucket); err != nil {
+		s.fail(w, requestID, r.URL.Path, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- listing ---------------------------------------------------------------

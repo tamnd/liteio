@@ -285,6 +285,11 @@ type ObjectLayer interface {
 	SetBucketVersioning(ctx context.Context, bucket string, cfg VersioningConfig) error
 	GetBucketVersioning(ctx context.Context, bucket string) (VersioningConfig, error)
 
+	// bucket policy
+	SetBucketPolicy(ctx context.Context, bucket string, doc []byte) error
+	GetBucketPolicy(ctx context.Context, bucket string) ([]byte, error)
+	DeleteBucketPolicy(ctx context.Context, bucket string) error
+
 	// copy
 	CopyObject(ctx context.Context, srcBucket, srcObject, dstBucket, dstObject string, srcInfo ObjectInfo, opts ObjectOptions) (ObjectInfo, error)
 	CopyObjectPart(ctx context.Context, srcBucket, srcObject, dstBucket, dstObject, uploadID string, partID int, srcInfo ObjectInfo, rng *HTTPRangeSpec, opts ObjectOptions) (PartInfo, error)

@@ -174,6 +174,7 @@ the living source of truth and is updated as milestones land.
 | STS temporary credentials (AssumeRole, session intersection, expiry) | implemented (M4) |
 | Bucket policies + anonymous/public access (Principal, cross-path combine) | implemented (M4) |
 | IAM condition keys (string/bool/IP/numeric/date, Not + IfExists variants) | implemented (M4) |
+| Bucket-policy persistence + ?policy GET/PUT/DELETE endpoint | implemented (M4) |
 | OIDC/LDAP federation / front-door authz wiring / admin API | planned (M4) |
 | Free web console | planned (M5) |
 | Lifecycle / encryption / object lock | planned (M6) |
