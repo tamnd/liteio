@@ -5,9 +5,14 @@ package s3
 import (
 	"bytes"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -410,6 +415,215 @@ func TestAssumeRoleUnsignedRejected(t *testing.T) {
 	// AssumeRole exchanges the caller's own credentials, so an unsigned request to
 	// it is refused even though the unsigned STS path is open for federated flows.
 	mustSTSError(t, h.postForm(url.Values{"Action": {"AssumeRole"}}), http.StatusForbidden, "AccessDenied")
+}
+
+// --- Certificate (X.509) federated flow ---
+
+// certHarness wires the front door over TLS so a client certificate reaches the STS
+// endpoint. The listener only requests a certificate; liteio verifies it against the
+// store's own trust roots in AssumeRoleWithCertificate.
+type certHarness struct {
+	t      *testing.T
+	srv    *httptest.Server
+	store  *auth.Store
+	client *http.Client
+}
+
+func newCertHarness(t *testing.T) (*certHarness, *certIssuer) {
+	t.Helper()
+	const n, parity = 6, 2
+	drives := make([]storage.StorageAPI, n)
+	for i := range drives {
+		d, err := local.New(t.TempDir())
+		if err != nil {
+			t.Fatalf("local.New: %v", err)
+		}
+		drives[i] = d
+	}
+	layer, err := object.NewSingleSet([16]byte{5, 5, 5}, drives, parity)
+	if err != nil {
+		t.Fatalf("NewSingleSet: %v", err)
+	}
+
+	store := auth.NewStore(testCreds.AccessKey, testCreds.SecretKey)
+	ca := newCertIssuer(t)
+	if err := store.RegisterCertificateProvider(auth.CertificateProvider{Name: "test", Roots: ca.roots()}); err != nil {
+		t.Fatalf("RegisterCertificateProvider: %v", err)
+	}
+
+	server := NewServer(layer, store,
+		WithAuthorizer(store),
+		WithSTS(store),
+		WithClock(func() time.Time { return time.Now().UTC() }))
+	srv := httptest.NewUnstartedServer(server)
+	// Request a client certificate but do not verify it at the TLS layer: liteio
+	// makes the trust decision against its own roots in the STS handler.
+	srv.TLS = &tls.Config{ClientAuth: tls.RequestClientCert}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+
+	h := &certHarness{t: t, srv: srv, store: store, client: srv.Client()}
+	return h, ca
+}
+
+// withClientCert returns an HTTP client that trusts the test server and presents the
+// given client certificate on the TLS handshake.
+func (h *certHarness) withClientCert(cert *tls.Certificate) *http.Client {
+	base := h.srv.Client().Transport.(*http.Transport).Clone()
+	if cert != nil {
+		base.TLSClientConfig.Certificates = []tls.Certificate{*cert}
+	}
+	return &http.Client{Transport: base}
+}
+
+// postFormCert sends an unsigned form POST over TLS with the given client (which may
+// carry a client certificate), the way a certificate client calls the STS endpoint.
+func (h *certHarness) postFormCert(client *http.Client, form url.Values) result {
+	h.t.Helper()
+	resp, err := client.PostForm(h.srv.URL+"/", form)
+	if err != nil {
+		h.t.Fatalf("post form: %v", err)
+	}
+	defer resp.Body.Close()
+	rb, _ := io.ReadAll(resp.Body)
+	return result{status: resp.StatusCode, header: resp.Header, body: rb}
+}
+
+func TestAssumeRoleWithCertificate(t *testing.T) {
+	h, ca := newCertHarness(t)
+
+	// Admin seeds a bucket and object the federated session will read.
+	mustStatus(t, h.doAs(testCreds, http.MethodPut, "/b", nil), http.StatusOK)
+	mustStatus(t, h.doAs(testCreds, http.MethodPut, "/b/k", []byte("hello")), http.StatusOK)
+
+	// A client cert whose subject organization names the readonly policy yields a
+	// usable readonly session over the unsigned certificate flow.
+	cert := ca.issue(t, "alice@corp", []string{"readonly"})
+	res := h.postFormCert(h.withClientCert(cert), url.Values{"Action": {"AssumeRoleWithCertificate"}})
+	if res.status != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", res.status, res.body)
+	}
+	var parsed assumeRoleWithCertificateResponse
+	if err := xml.Unmarshal(res.body, &parsed); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, res.body)
+	}
+	c := parsed.Result.Credentials
+	creds := auth.Credentials{AccessKey: c.AccessKeyID, SecretKey: c.SecretAccessKey}
+	if creds.AccessKey == "" || creds.SecretKey == "" {
+		t.Fatalf("incomplete credentials: %+v", c)
+	}
+	// The readonly session reads but cannot write.
+	mustStatus(t, h.doAs(creds, http.MethodGet, "/b/k", nil), http.StatusOK)
+	mustStatus(t, h.doAs(creds, http.MethodPut, "/b/k2", []byte("nope")), http.StatusForbidden)
+}
+
+func (h *certHarness) doAs(c auth.Credentials, method, path string, body []byte) result {
+	h.t.Helper()
+	var rdr io.Reader
+	hash := sign.EmptyPayloadHash
+	if body != nil {
+		rdr = bytes.NewReader(body)
+		sum := sha256.Sum256(body)
+		hash = hex.EncodeToString(sum[:])
+	}
+	req, err := http.NewRequest(method, h.srv.URL+path, rdr)
+	if err != nil {
+		h.t.Fatalf("new request: %v", err)
+	}
+	if body != nil {
+		req.ContentLength = int64(len(body))
+	}
+	sign.SignHeader(req, c, "us-east-1", hash, time.Now().UTC())
+	resp, err := h.client.Do(req)
+	if err != nil {
+		h.t.Fatalf("do %s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+	rb, err := io.ReadAll(resp.Body)
+	if err != nil {
+		h.t.Fatalf("read body: %v", err)
+	}
+	return result{status: resp.StatusCode, header: resp.Header, body: rb}
+}
+
+func TestAssumeRoleWithCertificateRejections(t *testing.T) {
+	h, ca := newCertHarness(t)
+
+	// No client certificate at all is a ValidationError.
+	mustSTSError(t, h.postFormCert(h.withClientCert(nil), url.Values{"Action": {"AssumeRoleWithCertificate"}}),
+		http.StatusBadRequest, "ValidationError")
+
+	// A certificate from an untrusted CA is refused as AccessDenied.
+	foreign := newCertIssuer(t)
+	bad := foreign.issue(t, "mallory", []string{"readonly"})
+	mustSTSError(t, h.postFormCert(h.withClientCert(bad), url.Values{"Action": {"AssumeRoleWithCertificate"}}),
+		http.StatusForbidden, "AccessDenied")
+
+	// A trusted certificate that names no known policy is also AccessDenied.
+	noPolicy := ca.issue(t, "nobody", []string{"unknown-ou"})
+	mustSTSError(t, h.postFormCert(h.withClientCert(noPolicy), url.Values{"Action": {"AssumeRoleWithCertificate"}}),
+		http.StatusForbidden, "AccessDenied")
+}
+
+// certIssuer signs client certificates for the certificate-flow tests.
+type certIssuer struct {
+	caCert *x509.Certificate
+	caKey  *ecdsa.PrivateKey
+}
+
+func newCertIssuer(t *testing.T) *certIssuer {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("ca key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "test CA"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create CA: %v", err)
+	}
+	caCert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse CA: %v", err)
+	}
+	return &certIssuer{caCert: caCert, caKey: key}
+}
+
+func (c *certIssuer) roots() *x509.CertPool {
+	pool := x509.NewCertPool()
+	pool.AddCert(c.caCert)
+	return pool
+}
+
+// issue signs a client certificate and packages it as a tls.Certificate (leaf plus
+// private key) the client presents on the handshake.
+func (c *certIssuer) issue(t *testing.T, cn string, orgs []string) *tls.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("leaf key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{CommonName: cn, Organization: orgs},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, c.caCert, &key.PublicKey, c.caKey)
+	if err != nil {
+		t.Fatalf("create leaf: %v", err)
+	}
+	return &tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
 }
 
 // mustSTSError asserts the response is an STS error envelope with the wanted status

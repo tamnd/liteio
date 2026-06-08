@@ -76,17 +76,18 @@ type ServiceAccount struct {
 // Store is the identity authority: root, users, groups, service accounts, and the
 // named policy documents they attach. It is safe for concurrent use.
 type Store struct {
-	mu        sync.RWMutex
-	rootKey   string
-	rootSec   string
-	users     map[string]*User                // by access key
-	groups    map[string]*Group               // by name
-	svc       map[string]*ServiceAccount      // by access key
-	sessions  map[string]*sessionRecord       // STS sessions by access key
-	policies  map[string]Policy               // by name; seeded with the canned set
-	providers map[string]*webIdentityProvider // OIDC providers by issuer
-	now       func() time.Time                // clock, injectable for tests
-	client    *http.Client                    // for fetching provider JWKS
+	mu           sync.RWMutex
+	rootKey      string
+	rootSec      string
+	users        map[string]*User                // by access key
+	groups       map[string]*Group               // by name
+	svc          map[string]*ServiceAccount      // by access key
+	sessions     map[string]*sessionRecord       // STS sessions by access key
+	policies     map[string]Policy               // by name; seeded with the canned set
+	providers    map[string]*webIdentityProvider // OIDC providers by issuer
+	certProvider *certificateProvider            // X.509 client-cert trust, if configured
+	now          func() time.Time                // clock, injectable for tests
+	client       *http.Client                    // for fetching provider JWKS
 }
 
 // NewStore builds a store with the given root credential and the canned policies
