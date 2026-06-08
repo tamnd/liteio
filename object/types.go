@@ -18,6 +18,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/tamnd/liteio/event"
 	"github.com/tamnd/liteio/object/meta"
 )
 
@@ -66,6 +67,15 @@ type ObjectOptions struct {
 	// CopyObject or CopyObjectPart operation. It is used only for reading; the
 	// destination is controlled by SSECKey.
 	SrcSSECKey *[32]byte
+
+	// SourceIP is the client IP address, propagated for inclusion in event records.
+	SourceIP string
+
+	// EventName, when non-empty, overrides the S3 event name fired on success.
+	// The S3 front door sets this for CopyObject (ObjectCreated:Copy) and
+	// CompleteMultipartUpload (ObjectCreated:CompleteMultipartUpload); regular
+	// PutObject leaves it empty and the write path uses ObjectCreated:Put.
+	EventName string
 }
 
 // HTTPRangeSpec is a parsed HTTP Range request over a single object. It models
@@ -327,6 +337,11 @@ type ObjectLayer interface {
 	SetBucketQuota(ctx context.Context, bucket string, q BucketQuota) error
 	GetBucketQuota(ctx context.Context, bucket string) (BucketQuota, error)
 	DeleteBucketQuota(ctx context.Context, bucket string) error
+
+	// bucket notification configuration (event notifications, doc 09 §9.5)
+	SetBucketNotification(ctx context.Context, bucket string, cfg event.NotificationConfig) error
+	GetBucketNotification(ctx context.Context, bucket string) (event.NotificationConfig, error)
+	DeleteBucketNotification(ctx context.Context, bucket string) error
 
 	// object lock: bucket-level configuration and per-version retention / legal hold
 	SetObjectLockConfiguration(ctx context.Context, bucket string, cfg ObjectLockConfig) error

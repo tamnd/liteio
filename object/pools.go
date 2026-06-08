@@ -7,8 +7,10 @@ import (
 	"errors"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/tamnd/liteio/cluster/lock"
+	"github.com/tamnd/liteio/event"
 	"github.com/tamnd/liteio/object/placement"
 	"github.com/tamnd/liteio/storage"
 )
@@ -68,6 +70,13 @@ type ServerPools struct {
 	// updated inline on every PUT/DELETE, giving the quota enforcement an always
 	// current (though eventually replaced by the scanner) view of usage.
 	usageCache sync.Map // map[string]*bucketUsage
+
+	// dispatcher, when non-nil, is the event dispatcher for bucket notification
+	// delivery. Nil disables event notifications (no-op).
+	dispatcher *event.Dispatcher
+
+	// nowFn overrides time.Now for testing. Nil uses time.Now.
+	nowFn func() time.Time
 }
 
 // CacheNotifier carries a node's local metacache events to its peers so listings
@@ -108,6 +117,20 @@ func WithCacheNotifier(n CacheNotifier) Option {
 		}
 		sp.cacheNotify = n
 	}
+}
+
+// WithDispatcher installs the event dispatcher used for bucket notification
+// delivery. Without it, event notifications are disabled (no-op). Nil is safe.
+func WithDispatcher(d *event.Dispatcher) Option {
+	return func(sp *ServerPools) { sp.dispatcher = d }
+}
+
+// now returns the current time, using the injected clock if set.
+func (sp *ServerPools) now() time.Time {
+	if sp.nowFn != nil {
+		return sp.nowFn()
+	}
+	return time.Now()
 }
 
 // NewServerPools builds the object layer from a per-pool, per-set drive layout.
@@ -301,6 +324,11 @@ func (sp *ServerPools) PutObject(ctx context.Context, bucket, object string, r *
 		sp.cache.add(bucket, object)
 		sp.notifyCache(bucket, object)
 		sp.addBucketUsage(bucket, oi.Size, 1)
+		name := event.EventName(opts.EventName)
+		if name == "" {
+			name = event.ObjectCreatedPut
+		}
+		sp.notifyPut(ctx, oi, name, opts.SourceIP)
 	}
 	return oi, err
 }
@@ -334,6 +362,7 @@ func (sp *ServerPools) DeleteObject(ctx context.Context, bucket, object string, 
 		if !oi.DeleteMarker {
 			sp.addBucketUsage(bucket, -prevSize, -1)
 		}
+		sp.notifyDelete(ctx, bucket, object, oi.VersionID, oi.DeleteMarker, opts.SourceIP)
 	}
 	return oi, err
 }
@@ -390,6 +419,8 @@ func (sp *ServerPools) CompleteMultipartUpload(ctx context.Context, bucket, obje
 	if err == nil {
 		sp.cache.add(bucket, object)
 		sp.notifyCache(bucket, object)
+		sp.addBucketUsage(bucket, oi.Size, 1)
+		sp.notifyPut(ctx, oi, event.ObjectCreatedCompleteMultipartUpload, opts.SourceIP)
 	}
 	return oi, err
 }

@@ -92,4 +92,7 @@ var (
 	// ErrBucketSoftQuotaExceeded is returned (non-blocking) when a write crosses a
 	// soft limit. The write proceeds; callers should record a warning metric.
 	ErrBucketSoftQuotaExceeded = errors.New("object: bucket soft quota exceeded")
+	// ErrNoSuchBucketNotification is returned when no notification configuration
+	// has been set for a bucket.
+	ErrNoSuchBucketNotification = errors.New("object: no such bucket notification configuration")
 )
