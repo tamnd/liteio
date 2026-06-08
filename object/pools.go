@@ -37,6 +37,11 @@ type ServerPools struct {
 	pools        []*pool
 	cache        *metacache
 
+	// kms, when non-nil, is the key-management backend used for SSE-S3 and
+	// SSE-KMS encryption. A nil kms means server-managed encryption is
+	// disabled; objects with explicit SSE-C keys still work.
+	kms KMSBackend
+
 	// nodeID identifies this node as the owner of the namespace locks it takes;
 	// nsLockers is the lock-server quorum guarding the namespace. A single-node
 	// deployment holds one in-process LocalLocker; a clustered deployment replaces
@@ -135,6 +140,7 @@ func NewServerPools(deploymentID [16]byte, pools []PoolConfig, opts ...Option) (
 		set.notifyPartial = func(bucket, object, versionID string) {
 			sp.mrf.enqueue(healTask{bucket: bucket, object: object, versionID: versionID})
 		}
+		set.kms = sp.kms
 	}
 	return sp, nil
 }
@@ -189,8 +195,8 @@ func (sp *ServerPools) ApplyRemoteCache(bucket, key string) {
 
 // NewSingleSet is a convenience constructor for one pool of one set, the common
 // single-node small deployment and the shape most tests use.
-func NewSingleSet(deploymentID [16]byte, drives []storage.StorageAPI, parity int) (*ServerPools, error) {
-	return NewServerPools(deploymentID, []PoolConfig{{Sets: []SetConfig{{Drives: drives, Parity: parity}}}})
+func NewSingleSet(deploymentID [16]byte, drives []storage.StorageAPI, parity int, opts ...Option) (*ServerPools, error) {
+	return NewServerPools(deploymentID, []PoolConfig{{Sets: []SetConfig{{Drives: drives, Parity: parity}}}}, opts...)
 }
 
 // route returns the erasure set that owns object. Pool selection is free-space

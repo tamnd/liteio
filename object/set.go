@@ -16,10 +16,13 @@ import (
 	"strings"
 	"time"
 
+	"encoding/json"
+
 	"github.com/tamnd/liteio/object/erasure"
 	"github.com/tamnd/liteio/object/meta"
 	"github.com/tamnd/liteio/object/placement"
 	"github.com/tamnd/liteio/ssec"
+	"github.com/tamnd/liteio/sses3"
 	"github.com/tamnd/liteio/storage"
 )
 
@@ -49,6 +52,9 @@ type erasureSet struct {
 	// not land on every drive, so the reactive-heal queue can repair the laggards.
 	// It is nil until the owning ServerPools wires it.
 	notifyPartial func(bucket, object, versionID string)
+
+	// kms, when non-nil, enables SSE-S3 envelope encryption for this set.
+	kms KMSBackend
 }
 
 // newSet builds an erasure set over drives with M parity shards. K = N - M.
@@ -303,6 +309,17 @@ func (s *erasureSet) putObject(ctx context.Context, bucket, object string, r *Pu
 		return ObjectInfo{}, fmt.Errorf("object: read body: %w", err)
 	}
 
+	// Apply bucket default encryption when the caller has not already
+	// requested SSE-C or SSE-S3 explicitly.
+	if s.kms != nil && !opts.SSES3 && opts.SSECKey == nil {
+		if encRaw, encErr := s.bucketEncryption(ctx, bucket); encErr == nil {
+			var encCfg BucketEncryptionConfig
+			if json.Unmarshal(encRaw, &encCfg) == nil && encCfg.Algorithm == "AES256" {
+				opts.SSES3 = true
+			}
+		}
+	}
+
 	coder, err := erasure.NewCoder(s.dataShards(), s.parityShards())
 	if err != nil {
 		return ObjectInfo{}, err
@@ -361,6 +378,32 @@ func (s *erasureSet) putObject(ctx context.Context, bucket, object string, r *Pu
 		// ETag is MD5 of ciphertext for SSE-C objects (opaque, not plaintext MD5).
 		cs := md5.Sum(data)
 		etag = hex.EncodeToString(cs[:])
+	}
+
+	// SSE-S3: AES-256-GCM envelope encryption with a server-managed DEK.
+	// Applies when the object has the SSE-S3 header set (opts.SSES3) or when
+	// the bucket default encryption mandates SSE-S3 and no per-request SSE-C
+	// key was supplied.
+	if s.kms != nil && opts.SSES3 && opts.SSECKey == nil {
+		ct, wrappedKey, nonce, encErr := sses3.Encrypt(s.kms, data)
+		if encErr != nil {
+			return ObjectInfo{}, fmt.Errorf("object: SSE-S3 encrypt: %w", encErr)
+		}
+		wB64, nB64 := sses3.EncodeMetadata(wrappedKey, nonce)
+		userMeta[sses3.MetaAlgorithm] = sses3.Algorithm
+		userMeta[sses3.MetaWrappedKey] = wB64
+		userMeta[sses3.MetaNonce] = nB64
+		data = ct
+		// Re-encode shards from ciphertext (GCM adds a 16-byte tag).
+		encoded, err = erasure.EncodeData(coder, data)
+		if err != nil {
+			return ObjectInfo{}, err
+		}
+		for i, sh := range encoded {
+			shards[i] = append([]byte(nil), sh...)
+			checksums[i] = erasure.HashShard(shards[i])
+		}
+		etag = sses3.ETag(ct)
 	}
 
 	inline := int64(len(data)) <= s.inlineMax
@@ -568,6 +611,26 @@ func (s *erasureSet) getObject(ctx context.Context, bucket, object string, opts 
 		data = plain
 	} else if opts.SSECKey != nil {
 		return nil, ErrSSECOnUnencrypted
+	}
+
+	// SSE-S3: decrypt with the KMS-managed DEK when the object carries the
+	// wrapped-key metadata. A missing KMS is a configuration error.
+	if _, isSSES3 := rep.Metadata[sses3.MetaAlgorithm]; isSSES3 {
+		if s.kms == nil {
+			return nil, ErrSSES3NoKMS
+		}
+		wrappedKey, nonce, decodeErr := sses3.DecodeMetadata(
+			rep.Metadata[sses3.MetaWrappedKey],
+			rep.Metadata[sses3.MetaNonce],
+		)
+		if decodeErr != nil {
+			return nil, ErrReadQuorum
+		}
+		plain, decErr := sses3.Decrypt(s.kms, data, wrappedKey, nonce)
+		if decErr != nil {
+			return nil, ErrReadQuorum
+		}
+		data = plain
 	}
 
 	// A ranged read yields only the requested window; ObjectInfo still reports

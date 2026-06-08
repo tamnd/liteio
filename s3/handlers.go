@@ -300,6 +300,7 @@ func (s *Server) putObject(w http.ResponseWriter, r *http.Request, requestID, bu
 	if !parseSSECKey(w, r, requestID, &opts) {
 		return
 	}
+	parseSSES3Header(r, &opts)
 	info, err := s.layer.PutObject(r.Context(), bucket, object2, object.NewPutReader(r.Body, size), opts)
 	if err != nil {
 		s.fail(w, requestID, r.URL.Path, err)
@@ -310,6 +311,7 @@ func (s *Server) putObject(w http.ResponseWriter, r *http.Request, requestID, bu
 		w.Header().Set("x-amz-version-id", info.VersionID)
 	}
 	setSSECResponseHeaders(w, info.UserDefined)
+	setSSES3ResponseHeaders(w, info.UserDefined)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -349,6 +351,7 @@ func (s *Server) getObject(w http.ResponseWriter, r *http.Request, requestID, bu
 
 	writeObjectHeaders(w, info)
 	setSSECResponseHeaders(w, info.UserDefined)
+	setSSES3ResponseHeaders(w, info.UserDefined)
 	if rng != nil {
 		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
 		w.Header().Set("Content-Range", contentRange(start, length, info.Size))
@@ -370,6 +373,7 @@ func (s *Server) headObject(w http.ResponseWriter, r *http.Request, requestID, b
 		return
 	}
 	setSSECResponseHeaders(w, info.UserDefined)
+	setSSES3ResponseHeaders(w, info.UserDefined)
 	if s.checkPreconditions(w, r, requestID, info) {
 		return
 	}

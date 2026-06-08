@@ -53,6 +53,10 @@ type ObjectOptions struct {
 	ContentType string
 	// Range, when set, limits a GetObject to a byte range of the object.
 	Range *HTTPRangeSpec
+	// SSES3, when true, requests server-managed AES-256-GCM encryption (SSE-S3).
+	// Requires a KMS to be configured on the ServerPools. Ignored when SSECKey
+	// is also set (SSE-C takes precedence).
+	SSES3 bool
 	// SSECKey, when non-nil, is the 32-byte AES-256 customer key for SSE-C
 	// (server-side encryption with customer-provided keys). On a write it triggers
 	// AES-256-CTR encryption; on a read it decrypts and validates the key against
@@ -313,6 +317,11 @@ type ObjectLayer interface {
 	SetBucketLifecycle(ctx context.Context, bucket string, doc []byte) error
 	GetBucketLifecycle(ctx context.Context, bucket string) ([]byte, error)
 	DeleteBucketLifecycle(ctx context.Context, bucket string) error
+
+	// bucket default encryption (SSE-S3 / SSE-KMS)
+	SetBucketEncryption(ctx context.Context, bucket string, cfg BucketEncryptionConfig) error
+	GetBucketEncryption(ctx context.Context, bucket string) (BucketEncryptionConfig, error)
+	DeleteBucketEncryption(ctx context.Context, bucket string) error
 
 	// object lock: bucket-level configuration and per-version retention / legal hold
 	SetObjectLockConfiguration(ctx context.Context, bucket string, cfg ObjectLockConfig) error
