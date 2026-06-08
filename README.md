@@ -179,7 +179,8 @@ the living source of truth and is updated as milestones land.
 | Signed admin REST API (IAM CRUD over HTTP, SigV4-authenticated, action-gated) | implemented (M4) |
 | STS endpoint (AssumeRole over signed POST form, sessions sign through one authority) | implemented (M4) |
 | OIDC web identity federation (AssumeRoleWithWebIdentity, JWT/JWKS, federated sessions) | implemented (M4) |
-| LDAP/certificate federation flows | planned (M4) |
+| Certificate federation (AssumeRoleWithCertificate, X.509 chain validation, subject-to-policy) | implemented (M4) |
+| LDAP federation flow | planned (M4) |
 | Free web console | planned (M5) |
 | Lifecycle / encryption / object lock | planned (M6) |
 | Replication / tiering / events | planned (M7) |

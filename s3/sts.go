@@ -3,6 +3,7 @@
 package s3
 
 import (
+	"crypto/x509"
 	"encoding/xml"
 	"errors"
 	"net/http"
@@ -26,6 +27,7 @@ import (
 type STSIssuer interface {
 	AssumeRole(parentKey string, sessionPolicy *auth.Policy, ttl time.Duration) (auth.Session, error)
 	AssumeRoleWithWebIdentity(token string, sessionPolicy *auth.Policy, ttl time.Duration) (auth.Session, string, error)
+	AssumeRoleWithCertificate(chain []*x509.Certificate, sessionPolicy *auth.Policy, ttl time.Duration) (auth.Session, string, error)
 }
 
 // WithSTS enables the STS endpoint at the service root, issuing sessions from the
@@ -56,9 +58,11 @@ func (s *Server) serveSTS(w http.ResponseWriter, r *http.Request, requestID stri
 		s.assumeRole(w, r, requestID, vr)
 	case "AssumeRoleWithWebIdentity":
 		s.assumeRoleWithWebIdentity(w, r, requestID)
-	case "AssumeRoleWithLDAPIdentity", "AssumeRoleWithCertificate":
-		// The remaining federated flows (LDAP, certificate) layer their credential
-		// validation on the same session path; they land as their own subsystem.
+	case "AssumeRoleWithCertificate":
+		s.assumeRoleWithCertificate(w, r, requestID)
+	case "AssumeRoleWithLDAPIdentity":
+		// The LDAP federated flow layers its credential validation on the same
+		// session path; it lands as its own subsystem.
 		writeSTSError(w, requestID, errSTSNotImplemented)
 	default:
 		writeSTSError(w, requestID, stsError{http.StatusBadRequest, "InvalidAction", "the STS Action is missing or not supported"})
@@ -180,6 +184,64 @@ func (s *Server) assumeRoleWithWebIdentity(w http.ResponseWriter, r *http.Reques
 	writeSTSXML(w, requestID, http.StatusOK, resp)
 }
 
+// assumeRoleWithCertificate exchanges a client certificate for a session. Like the
+// web-identity flow it is unsigned: the certificate the client presented on the TLS
+// connection is the credential. The store verifies the chain against its configured
+// trust roots and maps the certificate's subject to the session's permissions. The
+// TLS listener only needs to request a client certificate; liteio does the trust
+// decision here against its own roots, so it need not be the listener's client CA.
+func (s *Server) assumeRoleWithCertificate(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+		writeSTSError(w, requestID, stsError{http.StatusBadRequest, "ValidationError", "a client certificate is required"})
+		return
+	}
+	ttl, policy, perr := sessionParams(r)
+	if perr != nil {
+		writeSTSError(w, requestID, *perr)
+		return
+	}
+
+	sess, subject, err := s.sts.AssumeRoleWithCertificate(r.TLS.PeerCertificates, policy, ttl)
+	if err != nil {
+		writeSTSError(w, requestID, certificateError(err))
+		return
+	}
+
+	name := r.Form.Get("RoleSessionName")
+	if name == "" {
+		name = subject
+	}
+	resp := assumeRoleWithCertificateResponse{
+		Result: assumeRoleWithCertificateResult{
+			Credentials: stsCredentials{
+				AccessKeyID:     sess.AccessKey,
+				SecretAccessKey: sess.SecretKey,
+				SessionToken:    sess.SessionToken,
+				Expiration:      sess.Expiration.UTC().Format(time.RFC3339),
+			},
+			AssumedRoleUser: assumedRoleUser{
+				Arn:           "arn:aws:sts:::assumed-role/" + subject + "/" + name,
+				AssumedRoleID: sess.AccessKey,
+			},
+		},
+		Metadata: stsResponseMetadata{RequestID: requestID},
+	}
+	writeSTSXML(w, requestID, http.StatusOK, resp)
+}
+
+// certificateError maps a certificate-exchange failure to its STS wire error. A
+// certificate that is untrusted, expired, or grants no policy is the caller's fault
+// and not a usable identity, so it is AccessDenied rather than a malformed-input
+// error.
+func certificateError(err error) stsError {
+	switch {
+	case errors.Is(err, auth.ErrInvalidToken):
+		return stsError{http.StatusForbidden, "AccessDenied", "the client certificate is not accepted"}
+	default:
+		return stsError{http.StatusInternalServerError, "InternalFailure", "could not issue session credentials"}
+	}
+}
+
 // webIdentityError maps a token-exchange failure to its STS wire error, mirroring
 // the codes AWS uses so SDK error handling behaves the same.
 func webIdentityError(err error) stsError {
@@ -218,6 +280,17 @@ type assumeRoleWithWebIdentityResult struct {
 	Credentials                 stsCredentials  `xml:"Credentials"`
 	SubjectFromWebIdentityToken string          `xml:"SubjectFromWebIdentityToken"`
 	AssumedRoleUser             assumedRoleUser `xml:"AssumedRoleUser"`
+}
+
+type assumeRoleWithCertificateResponse struct {
+	XMLName  xml.Name                        `xml:"https://sts.amazonaws.com/doc/2011-06-15/ AssumeRoleWithCertificateResponse"`
+	Result   assumeRoleWithCertificateResult `xml:"AssumeRoleWithCertificateResult"`
+	Metadata stsResponseMetadata             `xml:"ResponseMetadata"`
+}
+
+type assumeRoleWithCertificateResult struct {
+	Credentials     stsCredentials  `xml:"Credentials"`
+	AssumedRoleUser assumedRoleUser `xml:"AssumedRoleUser"`
 }
 
 type stsCredentials struct {
