@@ -175,7 +175,8 @@ the living source of truth and is updated as milestones land.
 | Bucket policies + anonymous/public access (Principal, cross-path combine) | implemented (M4) |
 | IAM condition keys (string/bool/IP/numeric/date, Not + IfExists variants) | implemented (M4) |
 | Bucket-policy persistence + ?policy GET/PUT/DELETE endpoint | implemented (M4) |
-| OIDC/LDAP federation / front-door authz wiring / admin API | planned (M4) |
+| Front-door authorization (per-request action/ARN/condition mapping, identity + bucket-policy combine) | implemented (M4) |
+| OIDC/LDAP federation / STS endpoint / admin API | planned (M4) |
 | Free web console | planned (M5) |
 | Lifecycle / encryption / object lock | planned (M6) |
 | Replication / tiering / events | planned (M7) |
