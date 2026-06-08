@@ -1,0 +1,40 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+:root {
+  color-scheme: light dark;
+  --fg: #1a1a1a;
+  --bg: #fbfbfb;
+  --accent: #2d6cdf;
+  --border: #d8d8d8;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+}
+#app { max-width: 960px; margin: 0 auto; padding: 2rem 1.25rem; }
+h1 { font-size: 1.5rem; margin: 0 0 1rem; }
+.login { max-width: 360px; margin: 8vh auto; }
+.login label { display: block; margin: 0.75rem 0 0.25rem; font-weight: 600; }
+.login input {
+  width: 100%;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+}
+button {
+  margin-top: 1rem;
+  padding: 0.6rem 1rem;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+button.link { background: none; color: var(--accent); padding: 0; margin: 0; }
+.error { color: #c0392b; margin-top: 0.75rem; min-height: 1.2em; }
+.topbar { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 0.75rem; }
+.muted { color: #777; }
