@@ -160,14 +160,6 @@ func (h *lockHarness) setRetentionViaLayer(bucket, key, versionID, mode string, 
 	}
 }
 
-// setLegalHoldViaLayer applies a legal hold directly through the object layer.
-func (h *lockHarness) setLegalHoldViaLayer(bucket, key, versionID, status string) {
-	h.t.Helper()
-	if err := h.layer.SetObjectLegalHold(context.Background(), bucket, key, versionID, status); err != nil {
-		h.t.Fatalf("SetObjectLegalHold %s/%s: %v", key, versionID, err)
-	}
-}
-
 // mustPutObject puts an object via the S3 API as testCreds, returning its versionId.
 func (h *lockHarness) mustPutObject(bucket, key string, body []byte) string {
 	h.t.Helper()
