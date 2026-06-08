@@ -50,4 +50,7 @@ var (
 	// ErrTooManyTags is returned when the tag count exceeds the per-object or
 	// per-bucket S3 limit.
 	ErrTooManyTags = errors.New("object: too many tags")
+	// ErrNoSuchBucketLifecycle is returned by GetBucketLifecycle when the bucket
+	// has no lifecycle configuration set.
+	ErrNoSuchBucketLifecycle = errors.New("object: no such bucket lifecycle configuration")
 )

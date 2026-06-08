@@ -145,6 +145,8 @@ func bucketOperation(r *http.Request, q url.Values) string {
 			return "GetBucketPolicy"
 		case q.Has("tagging"):
 			return "GetBucketTagging"
+		case q.Has("lifecycle"):
+			return "GetBucketLifecycleConfiguration"
 		case q.Has("versions"):
 			return "ListObjectVersions"
 		case q.Has("uploads"):
@@ -160,6 +162,8 @@ func bucketOperation(r *http.Request, q url.Values) string {
 			return "PutBucketPolicy"
 		case q.Has("tagging"):
 			return "PutBucketTagging"
+		case q.Has("lifecycle"):
+			return "PutBucketLifecycleConfiguration"
 		default:
 			return "CreateBucket"
 		}
@@ -171,6 +175,8 @@ func bucketOperation(r *http.Request, q url.Values) string {
 			return "DeleteBucketPolicy"
 		case q.Has("tagging"):
 			return "DeleteBucketTagging"
+		case q.Has("lifecycle"):
+			return "DeleteBucketLifecycleConfiguration"
 		}
 		return "DeleteBucket"
 	case http.MethodPost:
