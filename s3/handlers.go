@@ -472,8 +472,9 @@ func writeObjectHeaders(w http.ResponseWriter, info object.ObjectInfo) {
 	}
 }
 
-// userMetaFromHeader collects x-amz-meta-* headers and content-type into the
-// UserDefined map the object layer persists.
+// userMetaFromHeader collects x-amz-meta-* headers, content-type, and the
+// x-amz-tagging header (stored under its canonical key so Put/GetObjectTagging
+// share the same storage path) into the UserDefined map the object layer persists.
 func userMetaFromHeader(r *http.Request) map[string]string {
 	m := map[string]string{}
 	for k, vals := range r.Header {
@@ -484,6 +485,9 @@ func userMetaFromHeader(r *http.Request) map[string]string {
 	}
 	if ct := r.Header.Get("Content-Type"); ct != "" {
 		m["content-type"] = ct
+	}
+	if tag := r.Header.Get("x-amz-tagging"); tag != "" {
+		m["x-amz-tagging"] = tag
 	}
 	return m
 }

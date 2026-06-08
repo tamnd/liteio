@@ -209,6 +209,8 @@ func (s *Server) serveBucket(w http.ResponseWriter, r *http.Request, requestID, 
 			s.getBucketVersioning(w, r, requestID, bucket)
 		case q.Has("policy"):
 			s.getBucketPolicy(w, r, requestID, bucket)
+		case q.Has("tagging"):
+			s.getBucketTagging(w, r, requestID, bucket)
 		case q.Has("versions"):
 			s.listObjectVersions(w, r, requestID, bucket)
 		case q.Has("uploads"):
@@ -222,14 +224,20 @@ func (s *Server) serveBucket(w http.ResponseWriter, r *http.Request, requestID, 
 			s.putBucketVersioning(w, r, requestID, bucket)
 		case q.Has("policy"):
 			s.putBucketPolicy(w, r, requestID, bucket)
+		case q.Has("tagging"):
+			s.putBucketTagging(w, r, requestID, bucket)
 		default:
 			s.createBucket(w, r, requestID, bucket)
 		}
 	case http.MethodHead:
 		s.headBucket(w, r, requestID, bucket)
 	case http.MethodDelete:
-		if q.Has("policy") {
+		switch {
+		case q.Has("policy"):
 			s.deleteBucketPolicy(w, r, requestID, bucket)
+			return
+		case q.Has("tagging"):
+			s.deleteBucketTagging(w, r, requestID, bucket)
 			return
 		}
 		s.deleteBucket(w, r, requestID, bucket)
@@ -264,10 +272,18 @@ func (s *Server) serveObject(w http.ResponseWriter, r *http.Request, requestID, 
 			s.copyObject(w, r, requestID, bucket, object, copySource)
 			return
 		}
+		if q.Has("tagging") {
+			s.putObjectTagging(w, r, requestID, bucket, object)
+			return
+		}
 		s.putObject(w, r, requestID, bucket, object)
 	case http.MethodGet:
 		if uploadID != "" {
 			s.listObjectParts(w, r, requestID, bucket, object, uploadID)
+			return
+		}
+		if q.Has("tagging") {
+			s.getObjectTagging(w, r, requestID, bucket, object)
 			return
 		}
 		s.getObject(w, r, requestID, bucket, object)
@@ -285,6 +301,10 @@ func (s *Server) serveObject(w http.ResponseWriter, r *http.Request, requestID, 
 	case http.MethodDelete:
 		if uploadID != "" {
 			s.abortMultipartUpload(w, r, requestID, bucket, object, uploadID)
+			return
+		}
+		if q.Has("tagging") {
+			s.deleteObjectTagging(w, r, requestID, bucket, object)
 			return
 		}
 		s.deleteObject(w, r, requestID, bucket, object)

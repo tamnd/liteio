@@ -290,6 +290,16 @@ type ObjectLayer interface {
 	GetBucketPolicy(ctx context.Context, bucket string) ([]byte, error)
 	DeleteBucketPolicy(ctx context.Context, bucket string) error
 
+	// object tagging
+	SetObjectTags(ctx context.Context, bucket, object, versionID string, tags map[string]string) error
+	GetObjectTags(ctx context.Context, bucket, object, versionID string) (map[string]string, error)
+	DeleteObjectTags(ctx context.Context, bucket, object, versionID string) error
+
+	// bucket tagging
+	SetBucketTagging(ctx context.Context, bucket string, doc []byte) error
+	GetBucketTagging(ctx context.Context, bucket string) ([]byte, error)
+	DeleteBucketTagging(ctx context.Context, bucket string) error
+
 	// copy
 	CopyObject(ctx context.Context, srcBucket, srcObject, dstBucket, dstObject string, srcInfo ObjectInfo, opts ObjectOptions) (ObjectInfo, error)
 	CopyObjectPart(ctx context.Context, srcBucket, srcObject, dstBucket, dstObject, uploadID string, partID int, srcInfo ObjectInfo, rng *HTTPRangeSpec, opts ObjectOptions) (PartInfo, error)

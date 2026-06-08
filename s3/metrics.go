@@ -143,6 +143,8 @@ func bucketOperation(r *http.Request, q url.Values) string {
 			return "GetBucketVersioning"
 		case q.Has("policy"):
 			return "GetBucketPolicy"
+		case q.Has("tagging"):
+			return "GetBucketTagging"
 		case q.Has("versions"):
 			return "ListObjectVersions"
 		case q.Has("uploads"):
@@ -156,14 +158,19 @@ func bucketOperation(r *http.Request, q url.Values) string {
 			return "PutBucketVersioning"
 		case q.Has("policy"):
 			return "PutBucketPolicy"
+		case q.Has("tagging"):
+			return "PutBucketTagging"
 		default:
 			return "CreateBucket"
 		}
 	case http.MethodHead:
 		return "HeadBucket"
 	case http.MethodDelete:
-		if q.Has("policy") {
+		switch {
+		case q.Has("policy"):
 			return "DeleteBucketPolicy"
+		case q.Has("tagging"):
+			return "DeleteBucketTagging"
 		}
 		return "DeleteBucket"
 	case http.MethodPost:
@@ -187,12 +194,17 @@ func objectOperation(r *http.Request, q url.Values) string {
 			return "UploadPart"
 		case copySource != "":
 			return "CopyObject"
+		case q.Has("tagging"):
+			return "PutObjectTagging"
 		default:
 			return "PutObject"
 		}
 	case http.MethodGet:
 		if uploadID != "" {
 			return "ListParts"
+		}
+		if q.Has("tagging") {
+			return "GetObjectTagging"
 		}
 		return "GetObject"
 	case http.MethodHead:
@@ -207,6 +219,9 @@ func objectOperation(r *http.Request, q url.Values) string {
 	case http.MethodDelete:
 		if uploadID != "" {
 			return "AbortMultipartUpload"
+		}
+		if q.Has("tagging") {
+			return "DeleteObjectTagging"
 		}
 		return "DeleteObject"
 	}
