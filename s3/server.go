@@ -3,6 +3,7 @@
 package s3
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"strconv"
@@ -14,6 +15,12 @@ import (
 	"github.com/tamnd/liteio/object"
 	"github.com/tamnd/liteio/s3/sign"
 )
+
+// ctxKeyAccessKey is the context key used to carry the SigV4-verified access
+// key through the request, so handlers that need to perform secondary
+// authorization checks (like s3:BypassGovernanceRetention) can call the
+// Authorizer without re-parsing the signature.
+type ctxKeyAccessKey struct{}
 
 // decodedBody adapts a decoded streaming reader back into an io.ReadCloser, so
 // the handler reads object bytes while Close still releases the original body.
@@ -142,6 +149,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+
+	// Stash the verified access key in the request context so handlers that
+	// need a secondary authorization check (e.g. s3:BypassGovernanceRetention)
+	// can retrieve it without re-parsing the signature.
+	r = r.WithContext(context.WithValue(r.Context(), ctxKeyAccessKey{}, vr.AccessKey))
 
 	res := s.parseResource(r)
 	// The STS endpoint (doc 08.4) lives at the service root as a POST form. It

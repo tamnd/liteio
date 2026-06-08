@@ -94,6 +94,14 @@ type ObjectOptions struct {
 	// a peer cluster. The object layer stores StatusReplica in obj.meta so the
 	// object is not re-replicated (loop prevention for active-active setups).
 	ReplicationSource bool
+
+	// BypassGovernanceRetention, when true, allows a DELETE to proceed on a
+	// GOVERNANCE-mode locked version without waiting for the retain-until date.
+	// The S3 front door sets this only after verifying that the caller holds
+	// s3:BypassGovernanceRetention (spec 2020, doc 08, section 8.9).
+	// Legal hold always blocks regardless of this flag.
+	// COMPLIANCE-mode retention is never bypassed.
+	BypassGovernanceRetention bool
 }
 
 // HTTPRangeSpec is a parsed HTTP Range request over a single object. It models

@@ -40,10 +40,17 @@ type DefaultRetention struct {
 
 // checkObjectLocked returns ErrObjectLocked if the metadata indicates the
 // version is protected by retention or legal hold, given the current time.
-func checkObjectLocked(m map[string]string, now time.Time) error {
+//
+// bypassGovernance, when true, skips the retention date check for
+// GOVERNANCE-mode locks (the caller holds s3:BypassGovernanceRetention).
+// Legal hold always blocks regardless of bypassGovernance.
+// COMPLIANCE-mode retention always blocks regardless of bypassGovernance.
+func checkObjectLocked(m map[string]string, now time.Time, bypassGovernance bool) error {
 	if m == nil {
 		return nil
 	}
+	// Legal hold blocks unconditionally — even a bypass-privileged caller cannot
+	// delete a version under legal hold.
 	if m[LegalHoldKey] == LegalHoldOn {
 		return ErrObjectLocked
 	}
@@ -62,10 +69,14 @@ func checkObjectLocked(m map[string]string, now time.Time) error {
 			return nil // unparseable date; skip enforcement
 		}
 	}
-	if now.Before(t) {
-		return ErrObjectLocked
+	if !now.Before(t) {
+		return nil // retention period expired
 	}
-	return nil
+	// GOVERNANCE mode: a privileged caller may bypass the retention date check.
+	if mode == LockModeGov && bypassGovernance {
+		return nil
+	}
+	return ErrObjectLocked
 }
 
 // SetObjectLockConfiguration implements ObjectLayer: it stores the bucket-level
