@@ -58,7 +58,7 @@ func (s *Server) streamTrace(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue
 			}
-			fmt.Fprintf(w, "data: %s\n\n", b)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
 			flusher.Flush()
 		case <-r.Context().Done():
 			return
