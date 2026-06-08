@@ -17,6 +17,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"io"
 	"math/big"
 	"net/http"
@@ -200,10 +201,6 @@ func TestAssumeRoleRejectsBadInput(t *testing.T) {
 	// An unsupported action is a 400 InvalidAction.
 	res = h.assumeRoleAs(testCreds, url.Values{"Action": {"GetSessionToken"}})
 	mustSTSError(t, res, http.StatusBadRequest, "InvalidAction")
-
-	// The remaining federated flows are advertised as not implemented.
-	res = h.assumeRoleAs(testCreds, url.Values{"Action": {"AssumeRoleWithLDAPIdentity"}})
-	mustSTSError(t, res, http.StatusNotImplemented, "NotImplemented")
 }
 
 func TestAssumeRoleServiceAccountDenied(t *testing.T) {
@@ -624,6 +621,86 @@ func (c *certIssuer) issue(t *testing.T, cn string, orgs []string) *tls.Certific
 		t.Fatalf("create leaf: %v", err)
 	}
 	return &tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
+}
+
+// --- LDAP federated flow ---
+
+// fakeDir is an in-memory directory for the LDAP STS test: it maps a username and
+// password to a DN and group names, so the unsigned LDAP flow is exercised end to
+// end without a real LDAP server. It satisfies auth.Directory.
+type fakeDir struct {
+	dn       string
+	password string
+	groups   []string
+}
+
+func (d *fakeDir) Authenticate(username, password string) (string, []string, error) {
+	if username != "alice" || password != d.password {
+		return "", nil, fmt.Errorf("%w: bad credential", auth.ErrInvalidToken)
+	}
+	return d.dn, d.groups, nil
+}
+
+func ldapCreds(t *testing.T, res result) (auth.Credentials, string) {
+	t.Helper()
+	if res.status != http.StatusOK {
+		t.Fatalf("AssumeRoleWithLDAPIdentity status = %d; body=%s", res.status, res.body)
+	}
+	var parsed assumeRoleWithLDAPIdentityResponse
+	if err := xml.Unmarshal(res.body, &parsed); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, res.body)
+	}
+	c := parsed.Result.Credentials
+	if c.AccessKeyID == "" || c.SecretAccessKey == "" || c.SessionToken == "" {
+		t.Fatalf("incomplete credentials: %+v", c)
+	}
+	return auth.Credentials{AccessKey: c.AccessKeyID, SecretKey: c.SecretAccessKey}, parsed.Result.AssumedRoleUser.Arn
+}
+
+func TestAssumeRoleWithLDAPIdentityUnsigned(t *testing.T) {
+	h := newSTSHarness(t)
+	if err := h.store.RegisterLDAPProvider(auth.LDAPProvider{
+		Name:      "test",
+		Directory: &fakeDir{dn: "uid=alice,ou=people,dc=corp", password: "pw", groups: []string{"readonly"}},
+	}); err != nil {
+		t.Fatalf("RegisterLDAPProvider: %v", err)
+	}
+
+	// Admin seeds a bucket and object the federated session will read.
+	mustStatus(t, h.doAs(testCreds, http.MethodPut, "/b", nil), http.StatusOK)
+	mustStatus(t, h.doAs(testCreds, http.MethodPut, "/b/k", []byte("hello")), http.StatusOK)
+
+	// An unsigned LDAP exchange (the directory credential is the credential) maps the
+	// user's readonly group to a usable session.
+	creds, arn := ldapCreds(t, h.postForm(url.Values{
+		"Action": {"AssumeRoleWithLDAPIdentity"}, "LDAPUsername": {"alice"}, "LDAPPassword": {"pw"},
+	}))
+	// The synthesized assumed-role ARN carries the user DN as the subject.
+	if !strings.Contains(arn, "uid=alice,ou=people,dc=corp") {
+		t.Fatalf("arn = %q, want the user DN as subject", arn)
+	}
+	// The readonly session reads but cannot write.
+	mustStatus(t, h.doAs(creds, http.MethodGet, "/b/k", nil), http.StatusOK)
+	mustStatus(t, h.doAs(creds, http.MethodPut, "/b/k2", []byte("nope")), http.StatusForbidden)
+}
+
+func TestAssumeRoleWithLDAPIdentityRejections(t *testing.T) {
+	h := newSTSHarness(t)
+	if err := h.store.RegisterLDAPProvider(auth.LDAPProvider{
+		Name:      "test",
+		Directory: &fakeDir{dn: "uid=alice", password: "pw", groups: []string{"readonly"}},
+	}); err != nil {
+		t.Fatalf("RegisterLDAPProvider: %v", err)
+	}
+
+	// A missing username or password is a ValidationError.
+	mustSTSError(t, h.postForm(url.Values{"Action": {"AssumeRoleWithLDAPIdentity"}, "LDAPUsername": {"alice"}}),
+		http.StatusBadRequest, "ValidationError")
+
+	// A wrong password is a rejected credential: AccessDenied.
+	mustSTSError(t, h.postForm(url.Values{
+		"Action": {"AssumeRoleWithLDAPIdentity"}, "LDAPUsername": {"alice"}, "LDAPPassword": {"wrong"},
+	}), http.StatusForbidden, "AccessDenied")
 }
 
 // mustSTSError asserts the response is an STS error envelope with the wanted status

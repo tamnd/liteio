@@ -28,6 +28,7 @@ type STSIssuer interface {
 	AssumeRole(parentKey string, sessionPolicy *auth.Policy, ttl time.Duration) (auth.Session, error)
 	AssumeRoleWithWebIdentity(token string, sessionPolicy *auth.Policy, ttl time.Duration) (auth.Session, string, error)
 	AssumeRoleWithCertificate(chain []*x509.Certificate, sessionPolicy *auth.Policy, ttl time.Duration) (auth.Session, string, error)
+	AssumeRoleWithLDAPIdentity(username, password string, sessionPolicy *auth.Policy, ttl time.Duration) (auth.Session, string, error)
 }
 
 // WithSTS enables the STS endpoint at the service root, issuing sessions from the
@@ -61,9 +62,7 @@ func (s *Server) serveSTS(w http.ResponseWriter, r *http.Request, requestID stri
 	case "AssumeRoleWithCertificate":
 		s.assumeRoleWithCertificate(w, r, requestID)
 	case "AssumeRoleWithLDAPIdentity":
-		// The LDAP federated flow layers its credential validation on the same
-		// session path; it lands as its own subsystem.
-		writeSTSError(w, requestID, errSTSNotImplemented)
+		s.assumeRoleWithLDAPIdentity(w, r, requestID)
 	default:
 		writeSTSError(w, requestID, stsError{http.StatusBadRequest, "InvalidAction", "the STS Action is missing or not supported"})
 	}
@@ -229,6 +228,67 @@ func (s *Server) assumeRoleWithCertificate(w http.ResponseWriter, r *http.Reques
 	writeSTSXML(w, requestID, http.StatusOK, resp)
 }
 
+// assumeRoleWithLDAPIdentity exchanges a directory username and password for a
+// session. Like the other federated flows it is unsigned: the directory credential
+// is the credential. The store binds to the directory, verifies the credential, and
+// maps the user's groups to the session's permissions. The form carries the
+// credential the way the AWS and MinIO LDAP flows do, as LDAPUsername/LDAPPassword.
+func (s *Server) assumeRoleWithLDAPIdentity(w http.ResponseWriter, r *http.Request, requestID string) {
+	username := r.Form.Get("LDAPUsername")
+	password := r.Form.Get("LDAPPassword")
+	if username == "" || password == "" {
+		writeSTSError(w, requestID, stsError{http.StatusBadRequest, "ValidationError", "LDAPUsername and LDAPPassword are required"})
+		return
+	}
+	ttl, policy, perr := sessionParams(r)
+	if perr != nil {
+		writeSTSError(w, requestID, *perr)
+		return
+	}
+
+	sess, subject, err := s.sts.AssumeRoleWithLDAPIdentity(username, password, policy, ttl)
+	if err != nil {
+		writeSTSError(w, requestID, ldapError(err))
+		return
+	}
+
+	name := r.Form.Get("RoleSessionName")
+	if name == "" {
+		name = subject
+	}
+	resp := assumeRoleWithLDAPIdentityResponse{
+		Result: assumeRoleWithLDAPIdentityResult{
+			Credentials: stsCredentials{
+				AccessKeyID:     sess.AccessKey,
+				SecretAccessKey: sess.SecretKey,
+				SessionToken:    sess.SessionToken,
+				Expiration:      sess.Expiration.UTC().Format(time.RFC3339),
+			},
+			AssumedRoleUser: assumedRoleUser{
+				Arn:           "arn:aws:sts:::assumed-role/" + subject + "/" + name,
+				AssumedRoleID: sess.AccessKey,
+			},
+		},
+		Metadata: stsResponseMetadata{RequestID: requestID},
+	}
+	writeSTSXML(w, requestID, http.StatusOK, resp)
+}
+
+// ldapError maps a directory-exchange failure to its STS wire error. A directory
+// liteio cannot reach is a server-side fault (IDPCommunicationError, 500); a rejected
+// or unmapped credential is the caller's fault and not a usable identity, so it is
+// AccessDenied (403).
+func ldapError(err error) stsError {
+	switch {
+	case errors.Is(err, auth.ErrIDPCommunication):
+		return stsError{http.StatusInternalServerError, "IDPCommunicationError", "could not reach the directory"}
+	case errors.Is(err, auth.ErrInvalidToken):
+		return stsError{http.StatusForbidden, "AccessDenied", "the directory credential is not accepted"}
+	default:
+		return stsError{http.StatusInternalServerError, "InternalFailure", "could not issue session credentials"}
+	}
+}
+
 // certificateError maps a certificate-exchange failure to its STS wire error. A
 // certificate that is untrusted, expired, or grants no policy is the caller's fault
 // and not a usable identity, so it is AccessDenied rather than a malformed-input
@@ -289,6 +349,17 @@ type assumeRoleWithCertificateResponse struct {
 }
 
 type assumeRoleWithCertificateResult struct {
+	Credentials     stsCredentials  `xml:"Credentials"`
+	AssumedRoleUser assumedRoleUser `xml:"AssumedRoleUser"`
+}
+
+type assumeRoleWithLDAPIdentityResponse struct {
+	XMLName  xml.Name                         `xml:"https://sts.amazonaws.com/doc/2011-06-15/ AssumeRoleWithLDAPIdentityResponse"`
+	Result   assumeRoleWithLDAPIdentityResult `xml:"AssumeRoleWithLDAPIdentityResult"`
+	Metadata stsResponseMetadata              `xml:"ResponseMetadata"`
+}
+
+type assumeRoleWithLDAPIdentityResult struct {
 	Credentials     stsCredentials  `xml:"Credentials"`
 	AssumedRoleUser assumedRoleUser `xml:"AssumedRoleUser"`
 }
