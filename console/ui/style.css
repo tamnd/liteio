@@ -38,6 +38,13 @@ button.link { background: none; color: var(--accent); padding: 0; margin: 0; }
 .error { color: #c0392b; margin-top: 0.75rem; min-height: 1.2em; }
 .topbar { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 0.75rem; }
 .muted { color: #777; }
+nav.tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin: 0.5rem 0 0; }
+nav.tabs .tab { margin: 0; border-radius: 6px 6px 0 0; background: none; color: var(--fg); padding: 0.5rem 1rem; border-bottom: 2px solid transparent; }
+nav.tabs .tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+#mkbucket { display: flex; gap: 0.5rem; align-items: center; }
+#mkbucket input { padding: 0.45rem 0.6rem; border: 1px solid var(--border); border-radius: 6px; font: inherit; }
+#mkbucket button { margin: 0; padding: 0.45rem 0.9rem; }
+table.sets button.bucket { font-weight: 600; }
 h2 { font-size: 1.1rem; margin: 1.5rem 0 0.75rem; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.75rem; margin: 0; }
 .grid dt { font-size: 0.8rem; color: #777; }

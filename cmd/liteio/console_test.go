@@ -16,6 +16,7 @@ import (
 
 	"github.com/tamnd/liteio/auth"
 	"github.com/tamnd/liteio/object"
+	"github.com/tamnd/liteio/s3"
 	"github.com/tamnd/liteio/storage"
 	"github.com/tamnd/liteio/storage/local"
 )
@@ -60,7 +61,7 @@ func TestParseFlagsConsoleDisabled(t *testing.T) {
 // the console app, rather than letting the console SPA fallback swallow admin URLs.
 func TestBuildConsoleComposition(t *testing.T) {
 	store := auth.NewStore("liteioadmin", "liteioadmin")
-	handler, csrv, err := buildConsole(rootCfg(), store, nil)
+	handler, csrv, err := buildConsole(rootCfg(), store, nil, nil)
 	if err != nil {
 		t.Fatalf("buildConsole: %v", err)
 	}
@@ -98,7 +99,7 @@ func TestBuildConsoleComposition(t *testing.T) {
 // into the admin API, confirming the wiring carries a request end to end.
 func TestBuildConsoleLoginAndBridge(t *testing.T) {
 	store := auth.NewStore("liteioadmin", "liteioadmin")
-	handler, _, err := buildConsole(rootCfg(), store, nil)
+	handler, _, err := buildConsole(rootCfg(), store, nil, nil)
 	if err != nil {
 		t.Fatalf("buildConsole: %v", err)
 	}
@@ -142,7 +143,7 @@ func TestBuildConsoleLoginAndBridge(t *testing.T) {
 func TestBuildConsoleInfoThroughBridge(t *testing.T) {
 	store := auth.NewStore("liteioadmin", "liteioadmin")
 	layer := newDriveLayer(t, 4, 2)
-	handler, _, err := buildConsole(rootCfg(), store, layer)
+	handler, _, err := buildConsole(rootCfg(), store, layer, nil)
 	if err != nil {
 		t.Fatalf("buildConsole: %v", err)
 	}
@@ -173,6 +174,69 @@ func TestBuildConsoleInfoThroughBridge(t *testing.T) {
 	}
 }
 
+// TestBuildConsoleS3Browse drives the bucket browser end to end: sign in as root,
+// create a bucket through the S3 bridge, then list buckets and confirm it is there.
+// It proves the console's signed in-process path reaches the S3 data plane, not just
+// the admin API.
+func TestBuildConsoleS3Browse(t *testing.T) {
+	store := auth.NewStore("liteioadmin", "liteioadmin")
+	layer := newDriveLayer(t, 4, 2)
+	s3Handler := s3.NewServer(layer, store)
+	handler, _, err := buildConsole(rootCfg(), store, layer, s3Handler)
+	if err != nil {
+		t.Fatalf("buildConsole: %v", err)
+	}
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	login := mustJSON(t, map[string]string{"accessKey": "liteioadmin", "secretKey": "liteioadmin"})
+	if s := post(t, client, srv.URL+"/api/login", login); s != http.StatusOK {
+		t.Fatalf("login status = %d", s)
+	}
+
+	// Create a bucket through the S3 bridge (PUT /api/s3/<bucket>).
+	if s := sendJSON(t, client, http.MethodPut, srv.URL+"/api/s3/photos", nil); s != http.StatusOK {
+		t.Fatalf("create bucket via S3 bridge status = %d, want 200", s)
+	}
+
+	// List buckets through the bridge and confirm the new bucket is in the XML.
+	body, status := getBody(t, client, srv.URL+"/api/s3/", csrfHeaders())
+	if status != http.StatusOK {
+		t.Fatalf("list buckets via bridge status = %d, want 200; body %q", status, body)
+	}
+	if !strings.Contains(body, "<Name>photos</Name>") {
+		t.Errorf("ListBuckets did not include the new bucket, got %q", body)
+	}
+}
+
+// TestBuildConsoleS3BridgeAbsentWithoutHandler confirms the S3 bridge route is not
+// registered when no S3 handler is wired: the call falls through to the SPA shell
+// (200 HTML) rather than reaching a nil handler.
+func TestBuildConsoleS3BridgeAbsentWithoutHandler(t *testing.T) {
+	store := auth.NewStore("liteioadmin", "liteioadmin")
+	handler, _, err := buildConsole(rootCfg(), store, nil, nil)
+	if err != nil {
+		t.Fatalf("buildConsole: %v", err)
+	}
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	login := mustJSON(t, map[string]string{"accessKey": "liteioadmin", "secretKey": "liteioadmin"})
+	if s := post(t, client, srv.URL+"/api/login", login); s != http.StatusOK {
+		t.Fatalf("login status = %d", s)
+	}
+	// With no S3 handler the /api/s3/ path is not a registered bridge route, so the
+	// SPA fallback serves index.html.
+	body, status := getBody(t, client, srv.URL+"/api/s3/", csrfHeaders())
+	if status != http.StatusOK || !strings.Contains(body, "liteio console") {
+		t.Errorf("without S3 handler, /api/s3/ status = %d body = %q, want the SPA shell", status, body)
+	}
+}
+
 // newDriveLayer builds a single-set object layer over n local drives in temp dirs.
 func newDriveLayer(t *testing.T, n, parity int) object.ObjectLayer {
 	t.Helper()
@@ -195,7 +259,7 @@ func TestBuildConsoleNeedsAddressToServe(t *testing.T) {
 	// buildConsole itself always builds; the address gate lives in run(). A blank
 	// region and default opts must still produce a working server.
 	store := auth.NewStore("k", "s")
-	if _, _, err := buildConsole(config{}, store, nil); err != nil {
+	if _, _, err := buildConsole(config{}, store, nil, nil); err != nil {
 		t.Fatalf("buildConsole with zero config: %v", err)
 	}
 }
@@ -204,7 +268,7 @@ func TestBuildConsoleNeedsAddressToServe(t *testing.T) {
 // cancelled and does not panic on a freshly built console server.
 func TestStartSweepingStops(t *testing.T) {
 	store := auth.NewStore("k", "s")
-	_, csrv, err := buildConsole(rootCfg(), store, nil)
+	_, csrv, err := buildConsole(rootCfg(), store, nil, nil)
 	if err != nil {
 		t.Fatalf("buildConsole: %v", err)
 	}
@@ -219,7 +283,7 @@ func TestStartSweepingStops(t *testing.T) {
 // pays for every view that reads from the admin API.
 func BenchmarkConsoleBridgeList(b *testing.B) {
 	store := auth.NewStore("liteioadmin", "liteioadmin")
-	handler, _, err := buildConsole(rootCfg(), store, nil)
+	handler, _, err := buildConsole(rootCfg(), store, nil, nil)
 	if err != nil {
 		b.Fatalf("buildConsole: %v", err)
 	}
