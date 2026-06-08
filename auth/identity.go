@@ -86,6 +86,7 @@ type Store struct {
 	policies     map[string]Policy               // by name; seeded with the canned set
 	providers    map[string]*webIdentityProvider // OIDC providers by issuer
 	certProvider *certificateProvider            // X.509 client-cert trust, if configured
+	ldapProvider *ldapProvider                   // LDAP directory binding, if configured
 	now          func() time.Time                // clock, injectable for tests
 	client       *http.Client                    // for fetching provider JWKS
 }

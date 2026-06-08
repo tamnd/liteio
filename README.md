@@ -180,7 +180,7 @@ the living source of truth and is updated as milestones land.
 | STS endpoint (AssumeRole over signed POST form, sessions sign through one authority) | implemented (M4) |
 | OIDC web identity federation (AssumeRoleWithWebIdentity, JWT/JWKS, federated sessions) | implemented (M4) |
 | Certificate federation (AssumeRoleWithCertificate, X.509 chain validation, subject-to-policy) | implemented (M4) |
-| LDAP federation flow | planned (M4) |
+| LDAP federation (AssumeRoleWithLDAPIdentity, lookup-then-bind, groups-to-policy) | implemented (M4) |
 | Free web console | planned (M5) |
 | Lifecycle / encryption / object lock | planned (M6) |
 | Replication / tiering / events | planned (M7) |
@@ -216,6 +216,7 @@ liteio is built from a complete written specification. The design lives in
  cmd/liteio/    main: flags, subcommands, wiring
  s3/            S3 REST front door: router, handlers, XML, errors, SigV4
  auth/          IAM: PBAC eval, policy model, users/groups/service accounts, STS
+ ldapdir/       LDAP directory client behind the auth Directory seam (federation)
  object/        ObjectLayer: placement, erasure, meta, multipart, lifecycle
  storage/       StorageAPI: local O_DIRECT drive ops, remote RPC drive
  cluster/       topology, format.json, peer membership, locks, inter-node RPC
