@@ -154,6 +154,12 @@ func TestOperationName(t *testing.T) {
 		{http.MethodPost, "/bucket/key", "uploadId=x", "", "CompleteMultipartUpload"},
 		{http.MethodDelete, "/bucket/key", "", "", "DeleteObject"},
 		{http.MethodDelete, "/bucket/key", "uploadId=x", "", "AbortMultipartUpload"},
+		{http.MethodDelete, "/bucket/key", "tagging=", "", "DeleteObjectTagging"},
+		{http.MethodPut, "/bucket/key", "tagging=", "", "PutObjectTagging"},
+		{http.MethodGet, "/bucket/key", "tagging=", "", "GetObjectTagging"},
+		{http.MethodPut, "/bucket", "tagging=", "", "PutBucketTagging"},
+		{http.MethodGet, "/bucket", "tagging=", "", "GetBucketTagging"},
+		{http.MethodDelete, "/bucket", "tagging=", "", "DeleteBucketTagging"},
 		{http.MethodPatch, "/bucket", "", "", "Unknown"},
 	}
 	s := &Server{}

@@ -42,4 +42,12 @@ var (
 	// ErrNoSuchBucketPolicy is returned by GetBucketPolicy when the bucket has no
 	// policy attached.
 	ErrNoSuchBucketPolicy = errors.New("object: no such bucket policy")
+	// ErrNoSuchBucketTagging is returned by GetBucketTagging when the bucket has
+	// no tags set.
+	ErrNoSuchBucketTagging = errors.New("object: no such bucket tagging")
+	// ErrInvalidTag is returned when a tag key or value violates the S3 limits.
+	ErrInvalidTag = errors.New("object: invalid tag")
+	// ErrTooManyTags is returned when the tag count exceeds the per-object or
+	// per-bucket S3 limit.
+	ErrTooManyTags = errors.New("object: too many tags")
 )

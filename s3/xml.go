@@ -249,6 +249,45 @@ type copyObjectResult struct {
 	ETag         string   `xml:"ETag"`
 }
 
+// --- tagging (PUT/GET/DELETE ?tagging on bucket and object) ---------------
+
+// taggingRequest is the body of a PutObjectTagging / PutBucketTagging request.
+type taggingRequest struct {
+	XMLName xml.Name   `xml:"Tagging"`
+	TagSet  []tagEntry `xml:"TagSet>Tag"`
+}
+
+// taggingResponse is the body of a GetObjectTagging / GetBucketTagging response.
+type taggingResponse struct {
+	XMLName xml.Name   `xml:"Tagging"`
+	XMLNS   string     `xml:"xmlns,attr"`
+	TagSet  []tagEntry `xml:"TagSet>Tag"`
+}
+
+type tagEntry struct {
+	Key   string `xml:"Key"`
+	Value string `xml:"Value"`
+}
+
+// tagsToXML converts a map to an ordered slice of tagEntry for XML rendering.
+func tagsToXML(tags map[string]string) []tagEntry {
+	entries := make([]tagEntry, 0, len(tags))
+	for k, v := range tags {
+		entries = append(entries, tagEntry{Key: k, Value: v})
+	}
+	return entries
+}
+
+// tagsFromXML converts the parsed tagEntry slice to a map. Duplicate keys keep
+// the last value, matching S3's behavior.
+func tagsFromXML(entries []tagEntry) map[string]string {
+	m := make(map[string]string, len(entries))
+	for _, e := range entries {
+		m[e.Key] = e.Value
+	}
+	return m
+}
+
 // CopyPartResult (PUT /bucket/key?partNumber=N&uploadId=... with x-amz-copy-source).
 type copyPartResult struct {
 	XMLName      xml.Name `xml:"CopyPartResult"`
