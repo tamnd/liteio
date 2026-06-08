@@ -149,6 +149,8 @@ func bucketOperation(r *http.Request, q url.Values) string {
 			return "GetBucketLifecycleConfiguration"
 		case q.Has("object-lock"):
 			return "GetObjectLockConfiguration"
+		case q.Has("encryption"):
+			return "GetBucketEncryption"
 		case q.Has("versions"):
 			return "ListObjectVersions"
 		case q.Has("uploads"):
@@ -168,6 +170,8 @@ func bucketOperation(r *http.Request, q url.Values) string {
 			return "PutBucketLifecycleConfiguration"
 		case q.Has("object-lock"):
 			return "PutObjectLockConfiguration"
+		case q.Has("encryption"):
+			return "PutBucketEncryption"
 		default:
 			return "CreateBucket"
 		}
@@ -181,6 +185,8 @@ func bucketOperation(r *http.Request, q url.Values) string {
 			return "DeleteBucketTagging"
 		case q.Has("lifecycle"):
 			return "DeleteBucketLifecycleConfiguration"
+		case q.Has("encryption"):
+			return "DeleteBucketEncryption"
 		}
 		return "DeleteBucket"
 	case http.MethodPost:

@@ -215,6 +215,8 @@ func (s *Server) serveBucket(w http.ResponseWriter, r *http.Request, requestID, 
 			s.getBucketLifecycleConfiguration(w, r, requestID, bucket)
 		case q.Has("object-lock"):
 			s.getObjectLockConfiguration(w, r, requestID, bucket)
+		case q.Has("encryption"):
+			s.getBucketEncryption(w, r, requestID, bucket)
 		case q.Has("versions"):
 			s.listObjectVersions(w, r, requestID, bucket)
 		case q.Has("uploads"):
@@ -234,6 +236,8 @@ func (s *Server) serveBucket(w http.ResponseWriter, r *http.Request, requestID, 
 			s.putBucketLifecycleConfiguration(w, r, requestID, bucket)
 		case q.Has("object-lock"):
 			s.putObjectLockConfiguration(w, r, requestID, bucket)
+		case q.Has("encryption"):
+			s.putBucketEncryption(w, r, requestID, bucket)
 		default:
 			s.createBucket(w, r, requestID, bucket)
 		}
@@ -249,6 +253,9 @@ func (s *Server) serveBucket(w http.ResponseWriter, r *http.Request, requestID, 
 			return
 		case q.Has("lifecycle"):
 			s.deleteBucketLifecycleConfiguration(w, r, requestID, bucket)
+			return
+		case q.Has("encryption"):
+			s.deleteBucketEncryption(w, r, requestID, bucket)
 			return
 		}
 		s.deleteBucket(w, r, requestID, bucket)

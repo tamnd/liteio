@@ -77,4 +77,10 @@ var (
 	// ErrNoSuchObjectRetention is returned by GetObjectRetention when the version
 	// has no retention set.
 	ErrNoSuchObjectRetention = errors.New("object: no such object retention")
+	// ErrSSES3NoKMS is returned when a GET targets an SSE-S3 object but the
+	// ServerPools was constructed without a KMS backend.
+	ErrSSES3NoKMS = errors.New("object: SSE-S3 object cannot be decrypted: no KMS configured")
+	// ErrNoSuchBucketEncryption is returned by GetBucketEncryption when the
+	// bucket has no default encryption configuration set.
+	ErrNoSuchBucketEncryption = errors.New("object: no such bucket encryption configuration")
 )

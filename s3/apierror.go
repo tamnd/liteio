@@ -62,6 +62,8 @@ var (
 	errNoSuchBucketPolicy           = APIError{"NoSuchBucketPolicy", "The bucket policy does not exist.", http.StatusNotFound}
 	errNoSuchTagSet                 = APIError{"NoSuchTagSet", "The TagSet does not exist.", http.StatusNotFound}
 	errNoSuchLifecycleConfiguration = APIError{"NoSuchLifecycleConfiguration", "The lifecycle configuration does not exist.", http.StatusNotFound}
+	errNoSuchBucketEncryption       = APIError{"ServerSideEncryptionConfigurationNotFoundError", "The server side encryption configuration was not found.", http.StatusNotFound}
+	errSSES3NoKMS                   = APIError{"InvalidRequest", "Server-side encryption is not available: no KMS is configured.", http.StatusBadRequest}
 	errObjectLocked                 = APIError{"ObjectLocked", "Object is protected by Object Lock and cannot be deleted or modified.", http.StatusConflict}
 	errObjectLockRequiresVersioning = APIError{"InvalidRequest", "Object Lock requires versioning to be enabled on the bucket.", http.StatusBadRequest}
 	errNoSuchObjectLockConfig       = APIError{"ObjectLockConfigurationNotFoundError", "Object Lock configuration does not exist for this bucket.", http.StatusNotFound}
@@ -114,6 +116,10 @@ func toAPIError(err error) APIError {
 		return errBadTagging
 	case errors.Is(err, object.ErrNoSuchBucketLifecycle):
 		return errNoSuchLifecycleConfiguration
+	case errors.Is(err, object.ErrNoSuchBucketEncryption):
+		return errNoSuchBucketEncryption
+	case errors.Is(err, object.ErrSSES3NoKMS):
+		return errSSES3NoKMS
 	case errors.Is(err, object.ErrObjectLocked):
 		return errObjectLocked
 	case errors.Is(err, object.ErrObjectLockRequiresVersioning):
