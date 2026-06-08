@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"sync"
 
 	"github.com/tamnd/liteio/cluster/lock"
 	"github.com/tamnd/liteio/object/placement"
@@ -62,6 +63,11 @@ type ServerPools struct {
 	// cluster. A non-empty key was added by a write; an empty key means the bucket
 	// was invalidated by a delete.
 	cacheNotify CacheNotifier
+
+	// usageCache tracks per-bucket object counts and sizes in memory. It is
+	// updated inline on every PUT/DELETE, giving the quota enforcement an always
+	// current (though eventually replaced by the scanner) view of usage.
+	usageCache sync.Map // map[string]*bucketUsage
 }
 
 // CacheNotifier carries a node's local metacache events to its peers so listings
@@ -279,10 +285,22 @@ func (sp *ServerPools) PutObject(ctx context.Context, bucket, object string, r *
 		return ObjectInfo{}, err
 	}
 	defer unlock()
+
+	// Quota check: hard limits block the write; soft limits are non-blocking but
+	// callers should record a warning. ErrBucketSoftQuotaExceeded is not fatal.
+	addSize := r.Size
+	if addSize < 0 {
+		addSize = 0
+	}
+	if qErr := sp.checkBucketQuota(ctx, bucket, addSize, 1); qErr != nil && qErr != ErrBucketSoftQuotaExceeded {
+		return ObjectInfo{}, qErr
+	}
+
 	oi, err := sp.route(object).putObject(ctx, bucket, object, r, opts)
 	if err == nil {
 		sp.cache.add(bucket, object)
 		sp.notifyCache(bucket, object)
+		sp.addBucketUsage(bucket, oi.Size, 1)
 	}
 	return oi, err
 }
@@ -304,10 +322,18 @@ func (sp *ServerPools) DeleteObject(ctx context.Context, bucket, object string, 
 		return ObjectInfo{}, err
 	}
 	defer unlock()
+	// Read size before deleting so the usage counter can be decremented.
+	var prevSize int64
+	if prev, infoErr := sp.route(object).getObjectInfo(ctx, bucket, object, opts); infoErr == nil {
+		prevSize = prev.Size
+	}
 	oi, err := sp.route(object).deleteObject(ctx, bucket, object, opts)
 	if err == nil {
 		sp.cache.invalidate(bucket)
 		sp.notifyCache(bucket, "")
+		if !oi.DeleteMarker {
+			sp.addBucketUsage(bucket, -prevSize, -1)
+		}
 	}
 	return oi, err
 }

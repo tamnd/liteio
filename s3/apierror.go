@@ -86,6 +86,8 @@ var (
 	errSlowDown                     = APIError{"SlowDown", "Please reduce your request rate.", http.StatusServiceUnavailable}
 	errInternalError                = APIError{"InternalError", "We encountered an internal error. Please try again.", http.StatusInternalServerError}
 	errNotImplemented               = APIError{"NotImplemented", "A header or operation you provided implies functionality that is not implemented.", http.StatusNotImplemented}
+	errNoSuchBucketQuota            = APIError{"NoSuchBucketQuota", "The bucket quota configuration does not exist.", http.StatusNotFound}
+	errBucketQuotaExceeded          = APIError{"QuotaExceeded", "The requested write would exceed the bucket's configured quota.", http.StatusForbidden}
 )
 
 // toAPIError maps an object-layer (or lower) error to its S3 catalog entry. A nil
@@ -146,6 +148,10 @@ func toAPIError(err error) APIError {
 		return errEntityTooSmall
 	case errors.Is(err, object.ErrNotImplemented):
 		return errNotImplemented
+	case errors.Is(err, object.ErrBucketQuotaExceeded):
+		return errBucketQuotaExceeded
+	case errors.Is(err, object.ErrNoSuchBucketQuota):
+		return errNoSuchBucketQuota
 	case errors.Is(err, object.ErrReadQuorum), errors.Is(err, object.ErrWriteQuorum):
 		// A set without quorum is asking the client to back off and retry.
 		return errSlowDown
