@@ -710,7 +710,7 @@ func (s *erasureSet) deleteObject(ctx context.Context, bucket, object string, op
 	// retention or legal hold.
 	if lockSelected, _, lockOK := meta.QuorumVersion(existing, opts.VersionID, s.readQuorum()); lockOK {
 		if lockFI, lockFound := firstPresent(lockSelected); lockFound && !lockFI.Deleted {
-			if err := checkObjectLocked(lockFI.Metadata, s.now()); err != nil {
+			if err := checkObjectLocked(lockFI.Metadata, s.now(), opts.BypassGovernanceRetention); err != nil {
 				return ObjectInfo{}, err
 			}
 		}

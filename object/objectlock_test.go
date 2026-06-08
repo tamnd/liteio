@@ -304,7 +304,7 @@ func TestCheckObjectLocked(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := checkObjectLocked(tc.meta, now)
+			err := checkObjectLocked(tc.meta, now, false)
 			if tc.wantErr && !errors.Is(err, ErrObjectLocked) {
 				t.Errorf("expected ErrObjectLocked, got %v", err)
 			}
@@ -312,6 +312,93 @@ func TestCheckObjectLocked(t *testing.T) {
 				t.Errorf("unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+// TestBypassGovernanceWhenFlagSet confirms that a GOVERNANCE-locked version
+// can be deleted when BypassGovernanceRetention is set on the options.
+func TestBypassGovernanceWhenFlagSet(t *testing.T) {
+	ctx := context.Background()
+	sp := newLayer(t, 4, 2)
+	mustMakeBucket(t, sp, "bkt")
+	mustEnableVersioning(t, sp, "bkt")
+
+	info := putBytes(t, sp, "bkt", "obj", []byte("data"))
+	vid := info.VersionID
+
+	until := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339Nano)
+	if err := sp.SetObjectRetention(ctx, "bkt", "obj", vid, LockModeGov, until); err != nil {
+		t.Fatalf("SetObjectRetention: %v", err)
+	}
+
+	// With bypass flag: should succeed.
+	if _, err := sp.DeleteObject(ctx, "bkt", "obj", ObjectOptions{VersionID: vid, BypassGovernanceRetention: true}); err != nil {
+		t.Fatalf("DeleteObject with bypass: %v", err)
+	}
+}
+
+// TestGovernanceStillBlocksWithoutBypass confirms that GOVERNANCE mode blocks
+// deletion when the bypass flag is not set.
+func TestGovernanceStillBlocksWithoutBypass(t *testing.T) {
+	ctx := context.Background()
+	sp := newLayer(t, 4, 2)
+	mustMakeBucket(t, sp, "bkt")
+	mustEnableVersioning(t, sp, "bkt")
+
+	info := putBytes(t, sp, "bkt", "obj", []byte("data"))
+	vid := info.VersionID
+
+	until := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339Nano)
+	if err := sp.SetObjectRetention(ctx, "bkt", "obj", vid, LockModeGov, until); err != nil {
+		t.Fatalf("SetObjectRetention: %v", err)
+	}
+
+	_, err := sp.DeleteObject(ctx, "bkt", "obj", ObjectOptions{VersionID: vid})
+	if !errors.Is(err, ErrObjectLocked) {
+		t.Fatalf("expected ErrObjectLocked without bypass, got %v", err)
+	}
+}
+
+// TestComplianceBlocksEvenWithBypass confirms that COMPLIANCE-mode retention
+// cannot be bypassed with BypassGovernanceRetention.
+func TestComplianceBlocksEvenWithBypass(t *testing.T) {
+	ctx := context.Background()
+	sp := newLayer(t, 4, 2)
+	mustMakeBucket(t, sp, "bkt")
+	mustEnableVersioning(t, sp, "bkt")
+
+	info := putBytes(t, sp, "bkt", "obj", []byte("data"))
+	vid := info.VersionID
+
+	until := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339Nano)
+	if err := sp.SetObjectRetention(ctx, "bkt", "obj", vid, LockModeComp, until); err != nil {
+		t.Fatalf("SetObjectRetention: %v", err)
+	}
+
+	_, err := sp.DeleteObject(ctx, "bkt", "obj", ObjectOptions{VersionID: vid, BypassGovernanceRetention: true})
+	if !errors.Is(err, ErrObjectLocked) {
+		t.Fatalf("expected ErrObjectLocked for COMPLIANCE even with bypass, got %v", err)
+	}
+}
+
+// TestLegalHoldBlocksEvenWithBypass confirms that a legal hold is not lifted
+// by the BypassGovernanceRetention flag.
+func TestLegalHoldBlocksEvenWithBypass(t *testing.T) {
+	ctx := context.Background()
+	sp := newLayer(t, 4, 2)
+	mustMakeBucket(t, sp, "bkt")
+	mustEnableVersioning(t, sp, "bkt")
+
+	info := putBytes(t, sp, "bkt", "obj", []byte("held"))
+	vid := info.VersionID
+
+	if err := sp.SetObjectLegalHold(ctx, "bkt", "obj", vid, LegalHoldOn); err != nil {
+		t.Fatalf("SetObjectLegalHold: %v", err)
+	}
+
+	_, err := sp.DeleteObject(ctx, "bkt", "obj", ObjectOptions{VersionID: vid, BypassGovernanceRetention: true})
+	if !errors.Is(err, ErrObjectLocked) {
+		t.Fatalf("expected ErrObjectLocked for legal hold even with bypass, got %v", err)
 	}
 }
 

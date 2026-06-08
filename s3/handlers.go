@@ -400,6 +400,32 @@ func (s *Server) headObject(w http.ResponseWriter, r *http.Request, requestID, b
 
 func (s *Server) deleteObject(w http.ResponseWriter, r *http.Request, requestID, bucket, object2 string) {
 	opts := object.ObjectOptions{VersionID: r.URL.Query().Get("versionId")}
+
+	// x-amz-bypass-governance-retention: when the header is "true", the caller
+	// wants to delete a GOVERNANCE-locked version. The action is permitted only
+	// if the caller holds s3:BypassGovernanceRetention; without it, the request
+	// is refused with AccessDenied before the object layer is consulted.
+	if strings.EqualFold(r.Header.Get("x-amz-bypass-governance-retention"), "true") {
+		if s.authz == nil {
+			// No authorizer: treat as permitted (auth is not enforced).
+			opts.BypassGovernanceRetention = true
+		} else {
+			accessKey, _ := r.Context().Value(ctxKeyAccessKey{}).(string)
+			bucketPolicy, _ := s.loadBucketPolicy(r, bucket)
+			bypassReq := auth.Request{
+				Action:   "s3:BypassGovernanceRetention",
+				Resource: auth.ObjectARN(bucket, object2),
+				Context:  requestContext(r, accessKey),
+			}
+			ok, err2 := s.authz.AuthorizeS3(accessKey, bucketPolicy, bypassReq)
+			if err2 != nil || !ok {
+				writeError(w, requestID, r.URL.Path, errAccessDenied)
+				return
+			}
+			opts.BypassGovernanceRetention = true
+		}
+	}
+
 	info, err := s.layer.DeleteObject(r.Context(), bucket, object2, opts)
 	// S3 DELETE is idempotent: deleting a key that does not exist still succeeds.
 	if err != nil && !errors.Is(err, object.ErrObjectNotFound) {
