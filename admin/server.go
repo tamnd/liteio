@@ -71,16 +71,19 @@ var _ IAM = (*auth.Store)(nil)
 // Server is the admin REST API HTTP handler. It authenticates and authorizes every
 // request, then dispatches to the IAM handlers.
 type Server struct {
-	iam        IAM
-	creds      auth.CredentialStore // SigV4 secret lookup
-	info       InfoSource           // deployment topology for info/health (nil omits those routes)
-	tiers      TierLayer            // tier config management (nil omits those routes)
-	rebalancer RebalanceLayer       // rebalance/decommission (nil omits those routes)
-	perf       PerfLayer            // built-in perf test (nil omits the route)
-	version    string               // build version reported by the info endpoint
-	now        func() time.Time     // clock seam for signature skew (tests inject)
-	mux        *http.ServeMux
-	actions    map[string]string // ServeMux pattern -> required admin action
+	iam         IAM
+	creds       auth.CredentialStore // SigV4 secret lookup
+	info        InfoSource           // deployment topology for info/health (nil omits those routes)
+	tiers       TierLayer            // tier config management (nil omits those routes)
+	rebalancer  RebalanceLayer       // rebalance/decommission (nil omits those routes)
+	perf        PerfLayer            // built-in perf test (nil omits the route)
+	healer      HealLayer            // reactive-heal counters (nil returns 501)
+	configStore ConfigStore          // cluster config read/write (nil returns 501)
+	traceSource TraceSource          // live trace event stream (nil returns 501)
+	version     string               // build version reported by the info endpoint
+	now         func() time.Time     // clock seam for signature skew (tests inject)
+	mux         *http.ServeMux
+	actions     map[string]string // ServeMux pattern -> required admin action
 }
 
 // Option configures a Server.
@@ -162,6 +165,19 @@ func (s *Server) routes() *http.ServeMux {
 	// Built-in perf test; handler returns 501 when perf layer is nil.
 	rs = append(rs,
 		route{"POST " + apiPrefix + "/perf", "admin:Perf", s.startPerf},
+	)
+	// Heal status; handler returns 501 when healer is nil.
+	rs = append(rs,
+		route{"GET " + apiPrefix + "/heal", "admin:HealStatus", s.healStatus},
+	)
+	// Cluster config read/write; handlers return 501 when configStore is nil.
+	rs = append(rs,
+		route{"GET " + apiPrefix + "/config", "admin:GetConfig", s.getConfig},
+		route{"PUT " + apiPrefix + "/config", "admin:SetConfig", s.setConfig},
+	)
+	// Live trace streaming; handler returns 501 when traceSource is nil.
+	rs = append(rs,
+		route{"GET " + apiPrefix + "/trace", "admin:StreamTrace", s.streamTrace},
 	)
 	// Rebalance and decommission routes; handlers return 501 when rebalancer is nil.
 	rs = append(rs,

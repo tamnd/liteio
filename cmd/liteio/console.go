@@ -13,6 +13,7 @@ import (
 	"github.com/tamnd/liteio/console"
 	"github.com/tamnd/liteio/metrics"
 	"github.com/tamnd/liteio/object"
+	"github.com/tamnd/liteio/trace"
 )
 
 // version is the build version reported by the admin info endpoint and the console
@@ -35,6 +36,24 @@ func buildConsole(cfg config, store *auth.Store, layer object.ObjectLayer, s3Han
 	if src, ok := layer.(admin.InfoSource); ok {
 		adminOpts = append(adminOpts, admin.WithInfo(src))
 	}
+	// Wire heal status and live trace streaming when the layer is a ServerPools.
+	// Both run on every node that owns an object layer; a pure control node skips
+	// these (the handlers return 501 when the option is absent).
+	ring := trace.NewRingBuf()
+	trace.SetGlobalEmitter(ring)
+	adminOpts = append(adminOpts, admin.WithTraceSource(ring))
+	if sp, ok := layer.(*object.ServerPools); ok {
+		adminOpts = append(adminOpts, admin.WithHealer(sp))
+	}
+	// Seed the cluster config with deployment defaults. An operator can update
+	// these at runtime via PUT /liteio/admin/v1/config.
+	cfgStore := admin.NewInMemoryConfigStore(admin.ClusterConfig{
+		Region:                "us-east-1",
+		MaxConcurrentRequests: 0,
+		HealWorkers:           4,
+		ScannerInterval:       "1h",
+	})
+	adminOpts = append(adminOpts, admin.WithConfig(cfgStore))
 	adminSrv := admin.NewServer(store, store, adminOpts...)
 
 	// Wire the S3 data plane into the console so the bucket browser can list buckets

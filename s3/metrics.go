@@ -58,17 +58,33 @@ func (m *metricsSet) observe(api string, rec *metricsRecorder, bytesIn int64, se
 	}
 }
 
-// metricsRecorder wraps the response writer to record the bytes written and the S3
-// error code (set by writeError through the codeRecorder seam). It forwards the
-// optional http.Flusher so a streamed GET still flushes.
+// metricsRecorder wraps the response writer to record the bytes written, the
+// HTTP status code, and the S3 error code (set by writeError through the
+// codeRecorder seam). It forwards the optional http.Flusher so a streamed GET
+// still flushes.
 type metricsRecorder struct {
 	http.ResponseWriter
 	written   int64
+	code      int // HTTP status code; 0 means WriteHeader was never called (implicit 200)
 	errorCode string
 }
 
 func newMetricsRecorder(w http.ResponseWriter) *metricsRecorder {
 	return &metricsRecorder{ResponseWriter: w}
+}
+
+func (r *metricsRecorder) WriteHeader(status int) {
+	r.code = status
+	r.ResponseWriter.WriteHeader(status)
+}
+
+// statusCode returns the HTTP status written to this recorder. It returns 200
+// when WriteHeader was never called explicitly (the implicit default).
+func (r *metricsRecorder) statusCode() int {
+	if r.code == 0 {
+		return http.StatusOK
+	}
+	return r.code
 }
 
 func (r *metricsRecorder) Write(p []byte) (int, error) {
