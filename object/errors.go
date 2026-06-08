@@ -53,4 +53,13 @@ var (
 	// ErrNoSuchBucketLifecycle is returned by GetBucketLifecycle when the bucket
 	// has no lifecycle configuration set.
 	ErrNoSuchBucketLifecycle = errors.New("object: no such bucket lifecycle configuration")
+	// ErrSSECKeyRequired is returned when a GET/HEAD targets an SSE-C object but
+	// the request carries no customer key.
+	ErrSSECKeyRequired = errors.New("object: SSE-C customer key required")
+	// ErrSSECKeyMismatch is returned when the supplied customer key does not match
+	// the key's MD5 stored at write time.
+	ErrSSECKeyMismatch = errors.New("object: SSE-C customer key does not match")
+	// ErrSSECOnUnencrypted is returned when a request supplies an SSE-C key for an
+	// object that was written without SSE-C.
+	ErrSSECOnUnencrypted = errors.New("object: SSE-C key supplied for unencrypted object")
 )

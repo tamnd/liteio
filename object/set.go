@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"github.com/tamnd/liteio/object/erasure"
 	"github.com/tamnd/liteio/object/meta"
 	"github.com/tamnd/liteio/object/placement"
+	"github.com/tamnd/liteio/ssec"
 	"github.com/tamnd/liteio/storage"
 )
 
@@ -330,9 +332,38 @@ func (s *erasureSet) putObject(ctx context.Context, bucket, object string, r *Pu
 		}
 	}
 
-	inline := int64(len(data)) <= s.inlineMax
 	dist := placement.DriveOrder(object, s.deploymentID, len(s.drives))
 	userMeta := buildUserMeta(opts)
+
+	// SSE-C: encrypt after building userMeta, before computing inline/shard sizes.
+	if opts.SSECKey != nil {
+		nonce, nonceErr := ssec.NewNonce()
+		if nonceErr != nil {
+			return ObjectInfo{}, fmt.Errorf("object: generate SSE-C nonce: %w", nonceErr)
+		}
+		encrypted, encErr := ssec.Encrypt(*opts.SSECKey, nonce, data)
+		if encErr != nil {
+			return ObjectInfo{}, fmt.Errorf("object: SSE-C encrypt: %w", encErr)
+		}
+		userMeta[ssec.MetaKeyMD5] = ssec.KeyMD5Base64(*opts.SSECKey)
+		userMeta[ssec.MetaNonce] = base64.StdEncoding.EncodeToString(nonce)
+		data = encrypted
+		// Re-encode with the ciphertext (CTR mode preserves size, but we need
+		// fresh shards from the encrypted bytes).
+		encoded, err = erasure.EncodeData(coder, data)
+		if err != nil {
+			return ObjectInfo{}, err
+		}
+		for i, sh := range encoded {
+			shards[i] = append([]byte(nil), sh...)
+			checksums[i] = erasure.HashShard(shards[i])
+		}
+		// ETag is MD5 of ciphertext for SSE-C objects (opaque, not plaintext MD5).
+		cs := md5.Sum(data)
+		etag = hex.EncodeToString(cs[:])
+	}
+
+	inline := int64(len(data)) <= s.inlineMax
 
 	// Persist existing versions per drive so we can append the new one.
 	existing := s.readAllMeta(ctx, bucket, object)
@@ -442,6 +473,18 @@ func (s *erasureSet) getObjectInfo(ctx context.Context, bucket, object string, o
 	if !found {
 		return ObjectInfo{}, ErrObjectNotFound
 	}
+	// SSE-C key validation on HeadObject: enforce key presence and correctness
+	// without decrypting the object body.
+	if _, isSSEC := fi.Metadata[ssec.MetaKeyMD5]; isSSEC {
+		if opts.SSECKey == nil {
+			return ObjectInfo{}, ErrSSECKeyRequired
+		}
+		if !ssec.ValidateMD5(*opts.SSECKey, fi.Metadata[ssec.MetaKeyMD5]) {
+			return ObjectInfo{}, ErrSSECKeyMismatch
+		}
+	} else if opts.SSECKey != nil {
+		return ObjectInfo{}, ErrSSECOnUnencrypted
+	}
 	return toObjectInfo(bucket, object, fi), nil
 }
 
@@ -504,6 +547,27 @@ func (s *erasureSet) getObject(ctx context.Context, bucket, object string, opts 
 			return nil, ErrReadQuorum
 		}
 		data = append(data, partData...)
+	}
+
+	// SSE-C: decrypt before applying range.
+	if _, isSSEC := rep.Metadata[ssec.MetaKeyMD5]; isSSEC {
+		if opts.SSECKey == nil {
+			return nil, ErrSSECKeyRequired
+		}
+		if !ssec.ValidateMD5(*opts.SSECKey, rep.Metadata[ssec.MetaKeyMD5]) {
+			return nil, ErrSSECKeyMismatch
+		}
+		nonce, decodeErr := base64.StdEncoding.DecodeString(rep.Metadata[ssec.MetaNonce])
+		if decodeErr != nil {
+			return nil, ErrReadQuorum
+		}
+		plain, decErr := ssec.Encrypt(*opts.SSECKey, nonce, data)
+		if decErr != nil {
+			return nil, ErrReadQuorum
+		}
+		data = plain
+	} else if opts.SSECKey != nil {
+		return nil, ErrSSECOnUnencrypted
 	}
 
 	// A ranged read yields only the requested window; ObjectInfo still reports

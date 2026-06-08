@@ -297,6 +297,9 @@ func (s *Server) putObject(w http.ResponseWriter, r *http.Request, requestID, bu
 		ContentType: r.Header.Get("Content-Type"),
 		UserDefined: userMetaFromHeader(r),
 	}
+	if !parseSSECKey(w, r, requestID, &opts) {
+		return
+	}
 	info, err := s.layer.PutObject(r.Context(), bucket, object2, object.NewPutReader(r.Body, size), opts)
 	if err != nil {
 		s.fail(w, requestID, r.URL.Path, err)
@@ -306,11 +309,15 @@ func (s *Server) putObject(w http.ResponseWriter, r *http.Request, requestID, bu
 	if info.VersionID != "" {
 		w.Header().Set("x-amz-version-id", info.VersionID)
 	}
+	setSSECResponseHeaders(w, info.UserDefined)
 	w.WriteHeader(http.StatusOK)
 }
 
 func (s *Server) getObject(w http.ResponseWriter, r *http.Request, requestID, bucket, object2 string) {
 	opts := object.ObjectOptions{VersionID: r.URL.Query().Get("versionId")}
+	if !parseSSECKey(w, r, requestID, &opts) {
+		return
+	}
 
 	// Fetch metadata first so conditional headers and the Range can be resolved
 	// before any bytes are read, exactly as S3 evaluates a GET.
@@ -341,6 +348,7 @@ func (s *Server) getObject(w http.ResponseWriter, r *http.Request, requestID, bu
 	defer func() { _ = gr.Close() }()
 
 	writeObjectHeaders(w, info)
+	setSSECResponseHeaders(w, info.UserDefined)
 	if rng != nil {
 		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
 		w.Header().Set("Content-Range", contentRange(start, length, info.Size))
@@ -353,11 +361,15 @@ func (s *Server) getObject(w http.ResponseWriter, r *http.Request, requestID, bu
 
 func (s *Server) headObject(w http.ResponseWriter, r *http.Request, requestID, bucket, object2 string) {
 	opts := object.ObjectOptions{VersionID: r.URL.Query().Get("versionId")}
+	if !parseSSECKey(w, r, requestID, &opts) {
+		return
+	}
 	info, err := s.layer.GetObjectInfo(r.Context(), bucket, object2, opts)
 	if err != nil {
 		w.WriteHeader(toAPIError(err).HTTPStatus)
 		return
 	}
+	setSSECResponseHeaders(w, info.UserDefined)
 	if s.checkPreconditions(w, r, requestID, info) {
 		return
 	}

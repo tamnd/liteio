@@ -62,6 +62,10 @@ var (
 	errNoSuchBucketPolicy           = APIError{"NoSuchBucketPolicy", "The bucket policy does not exist.", http.StatusNotFound}
 	errNoSuchTagSet                 = APIError{"NoSuchTagSet", "The TagSet does not exist.", http.StatusNotFound}
 	errNoSuchLifecycleConfiguration = APIError{"NoSuchLifecycleConfiguration", "The lifecycle configuration does not exist.", http.StatusNotFound}
+	errSSECKeyRequired              = APIError{"InvalidRequest", "The object was stored using a form of Server Side Encryption. The correct parameters must be provided to retrieve the object.", http.StatusBadRequest}
+	errSSECKeyMismatch              = APIError{"AccessDenied", "The provided encryption key does not match the encryption key that was used to encrypt the object.", http.StatusForbidden}
+	errSSECOnUnencrypted            = APIError{"InvalidRequest", "The object was not stored using a customer encryption key.", http.StatusBadRequest}
+	errSSECBadRequest               = APIError{"InvalidArgument", "The SSE-C customer key is invalid.", http.StatusBadRequest}
 	errInvalidTag                   = APIError{"InvalidTag", "The Tag value you have provided is invalid.", http.StatusBadRequest}
 	errBadTagging                   = APIError{"InvalidTag", "Object tags exceed 10 or bucket tags exceed 50.", http.StatusBadRequest}
 	errMissingContentLength         = APIError{"MissingContentLength", "You must provide the Content-Length HTTP header.", http.StatusBadRequest}
@@ -105,6 +109,12 @@ func toAPIError(err error) APIError {
 		return errBadTagging
 	case errors.Is(err, object.ErrNoSuchBucketLifecycle):
 		return errNoSuchLifecycleConfiguration
+	case errors.Is(err, object.ErrSSECKeyRequired):
+		return errSSECKeyRequired
+	case errors.Is(err, object.ErrSSECKeyMismatch):
+		return errSSECKeyMismatch
+	case errors.Is(err, object.ErrSSECOnUnencrypted):
+		return errSSECOnUnencrypted
 	case errors.Is(err, object.ErrNoSuchUpload):
 		return errNoSuchUpload
 	case errors.Is(err, object.ErrInvalidPart):
