@@ -17,12 +17,15 @@ import (
 // ErrorResponse XMLName tags) is the AWS STS 2011-06-15 namespace, which clients
 // that parse the body expect verbatim.
 
-// STSIssuer mints temporary session credentials from a long-lived identity. It is
-// the slice of the IAM store the STS endpoint drives; *auth.Store satisfies it.
-// The interface keeps the s3 package depending on auth for types only, and lets
-// the endpoint be tested against a fake.
+// STSIssuer mints temporary session credentials. AssumeRole exchanges a long-lived
+// identity (the signed caller) for a session; AssumeRoleWithWebIdentity exchanges
+// an external OIDC token (the unsigned federated flow) for one, returning the token
+// subject alongside the session. It is the slice of the IAM store the STS endpoint
+// drives; *auth.Store satisfies it. The interface keeps the s3 package depending on
+// auth for types only, and lets the endpoint be tested against a fake.
 type STSIssuer interface {
 	AssumeRole(parentKey string, sessionPolicy *auth.Policy, ttl time.Duration) (auth.Session, error)
+	AssumeRoleWithWebIdentity(token string, sessionPolicy *auth.Policy, ttl time.Duration) (auth.Session, string, error)
 }
 
 // WithSTS enables the STS endpoint at the service root, issuing sessions from the
@@ -44,37 +47,54 @@ func (s *Server) serveSTS(w http.ResponseWriter, r *http.Request, requestID stri
 	}
 	switch r.Form.Get("Action") {
 	case "AssumeRole":
+		// AssumeRole exchanges the caller's own credentials, so it requires a signed
+		// request; the unsigned STS path (vr == nil) reaches only the federated flows.
+		if vr == nil {
+			writeSTSError(w, requestID, stsError{http.StatusForbidden, "AccessDenied", "AssumeRole requires a signed request"})
+			return
+		}
 		s.assumeRole(w, r, requestID, vr)
-	case "AssumeRoleWithWebIdentity", "AssumeRoleWithLDAPIdentity", "AssumeRoleWithCertificate":
-		// The federated flows (OIDC/LDAP/certificate) layer token validation on top
-		// of this same session path; they land as their own subsystem.
+	case "AssumeRoleWithWebIdentity":
+		s.assumeRoleWithWebIdentity(w, r, requestID)
+	case "AssumeRoleWithLDAPIdentity", "AssumeRoleWithCertificate":
+		// The remaining federated flows (LDAP, certificate) layer their credential
+		// validation on the same session path; they land as their own subsystem.
 		writeSTSError(w, requestID, errSTSNotImplemented)
 	default:
 		writeSTSError(w, requestID, stsError{http.StatusBadRequest, "InvalidAction", "the STS Action is missing or not supported"})
 	}
 }
 
-// assumeRole exchanges the caller's long-lived credentials for a session, honoring
-// an optional DurationSeconds and an optional inline Policy that can only narrow.
-func (s *Server) assumeRole(w http.ResponseWriter, r *http.Request, requestID string, vr *sign.VerifiedRequest) {
+// sessionParams parses the DurationSeconds and inline Policy a session request may
+// carry, shared by AssumeRole and the federated flows. A non-nil *stsError means the
+// input was rejected and the caller should stop.
+func sessionParams(r *http.Request) (time.Duration, *auth.Policy, *stsError) {
 	var ttl time.Duration
 	if v := r.Form.Get("DurationSeconds"); v != "" {
 		secs, err := strconv.Atoi(v)
 		if err != nil || secs < 0 {
-			writeSTSError(w, requestID, stsError{http.StatusBadRequest, "ValidationError", "DurationSeconds must be a non-negative integer"})
-			return
+			return 0, nil, &stsError{http.StatusBadRequest, "ValidationError", "DurationSeconds must be a non-negative integer"}
 		}
 		ttl = time.Duration(secs) * time.Second
 	}
-
 	var policy *auth.Policy
 	if doc := r.Form.Get("Policy"); doc != "" {
 		p, err := auth.ParsePolicy([]byte(doc))
 		if err != nil {
-			writeSTSError(w, requestID, stsError{http.StatusBadRequest, "MalformedPolicyDocument", err.Error()})
-			return
+			return 0, nil, &stsError{http.StatusBadRequest, "MalformedPolicyDocument", err.Error()}
 		}
 		policy = &p
+	}
+	return ttl, policy, nil
+}
+
+// assumeRole exchanges the caller's long-lived credentials for a session, honoring
+// an optional DurationSeconds and an optional inline Policy that can only narrow.
+func (s *Server) assumeRole(w http.ResponseWriter, r *http.Request, requestID string, vr *sign.VerifiedRequest) {
+	ttl, policy, perr := sessionParams(r)
+	if perr != nil {
+		writeSTSError(w, requestID, *perr)
+		return
 	}
 
 	sess, err := s.sts.AssumeRole(vr.AccessKey, policy, ttl)
@@ -115,6 +135,66 @@ func (s *Server) assumeRole(w http.ResponseWriter, r *http.Request, requestID st
 	writeSTSXML(w, requestID, http.StatusOK, resp)
 }
 
+// assumeRoleWithWebIdentity exchanges an external OIDC identity token for a session.
+// It is the unsigned federated flow: the WebIdentityToken is the credential, so no
+// SigV4 caller is required. The store verifies the token against the provider its
+// issuer names and maps the configured policy claim to the session's permissions.
+func (s *Server) assumeRoleWithWebIdentity(w http.ResponseWriter, r *http.Request, requestID string) {
+	token := r.Form.Get("WebIdentityToken")
+	if token == "" {
+		writeSTSError(w, requestID, stsError{http.StatusBadRequest, "ValidationError", "WebIdentityToken is required"})
+		return
+	}
+	ttl, policy, perr := sessionParams(r)
+	if perr != nil {
+		writeSTSError(w, requestID, *perr)
+		return
+	}
+
+	sess, subject, err := s.sts.AssumeRoleWithWebIdentity(token, policy, ttl)
+	if err != nil {
+		writeSTSError(w, requestID, webIdentityError(err))
+		return
+	}
+
+	name := r.Form.Get("RoleSessionName")
+	if name == "" {
+		name = subject
+	}
+	resp := assumeRoleWithWebIdentityResponse{
+		Result: assumeRoleWithWebIdentityResult{
+			Credentials: stsCredentials{
+				AccessKeyID:     sess.AccessKey,
+				SecretAccessKey: sess.SecretKey,
+				SessionToken:    sess.SessionToken,
+				Expiration:      sess.Expiration.UTC().Format(time.RFC3339),
+			},
+			SubjectFromWebIdentityToken: subject,
+			AssumedRoleUser: assumedRoleUser{
+				Arn:           "arn:aws:sts:::assumed-role/" + subject + "/" + name,
+				AssumedRoleID: sess.AccessKey,
+			},
+		},
+		Metadata: stsResponseMetadata{RequestID: requestID},
+	}
+	writeSTSXML(w, requestID, http.StatusOK, resp)
+}
+
+// webIdentityError maps a token-exchange failure to its STS wire error, mirroring
+// the codes AWS uses so SDK error handling behaves the same.
+func webIdentityError(err error) stsError {
+	switch {
+	case errors.Is(err, auth.ErrExpired):
+		return stsError{http.StatusBadRequest, "ExpiredToken", "the web identity token has expired"}
+	case errors.Is(err, auth.ErrIDPCommunication):
+		return stsError{http.StatusInternalServerError, "IDPCommunicationError", "could not reach the identity provider"}
+	case errors.Is(err, auth.ErrInvalidToken):
+		return stsError{http.StatusBadRequest, "InvalidIdentityToken", "the web identity token is not valid"}
+	default:
+		return stsError{http.StatusInternalServerError, "InternalFailure", "could not issue session credentials"}
+	}
+}
+
 // --- STS response and error envelopes ---
 
 type assumeRoleResponse struct {
@@ -126,6 +206,18 @@ type assumeRoleResponse struct {
 type assumeRoleResult struct {
 	Credentials     stsCredentials  `xml:"Credentials"`
 	AssumedRoleUser assumedRoleUser `xml:"AssumedRoleUser"`
+}
+
+type assumeRoleWithWebIdentityResponse struct {
+	XMLName  xml.Name                        `xml:"https://sts.amazonaws.com/doc/2011-06-15/ AssumeRoleWithWebIdentityResponse"`
+	Result   assumeRoleWithWebIdentityResult `xml:"AssumeRoleWithWebIdentityResult"`
+	Metadata stsResponseMetadata             `xml:"ResponseMetadata"`
+}
+
+type assumeRoleWithWebIdentityResult struct {
+	Credentials                 stsCredentials  `xml:"Credentials"`
+	SubjectFromWebIdentityToken string          `xml:"SubjectFromWebIdentityToken"`
+	AssumedRoleUser             assumedRoleUser `xml:"AssumedRoleUser"`
 }
 
 type stsCredentials struct {

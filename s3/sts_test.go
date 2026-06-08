@@ -4,10 +4,16 @@ package s3
 
 import (
 	"bytes"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/xml"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -190,8 +196,8 @@ func TestAssumeRoleRejectsBadInput(t *testing.T) {
 	res = h.assumeRoleAs(testCreds, url.Values{"Action": {"GetSessionToken"}})
 	mustSTSError(t, res, http.StatusBadRequest, "InvalidAction")
 
-	// A federated flow is advertised as not implemented.
-	res = h.assumeRoleAs(testCreds, url.Values{"Action": {"AssumeRoleWithWebIdentity"}})
+	// The remaining federated flows are advertised as not implemented.
+	res = h.assumeRoleAs(testCreds, url.Values{"Action": {"AssumeRoleWithLDAPIdentity"}})
 	mustSTSError(t, res, http.StatusNotImplemented, "NotImplemented")
 }
 
@@ -269,6 +275,141 @@ func BenchmarkAssumeRole(b *testing.B) {
 			b.Fatalf("status = %d", rec.Code)
 		}
 	}
+}
+
+// --- Web identity (OIDC) federated flow ---
+
+const webIdentityKid = "k1"
+
+// webIDP is an in-process OIDC provider for the web-identity tests: it signs RS256
+// tokens and serves the matching JWKS, so the unsigned federated flow is exercised
+// over a real fetch.
+type webIDP struct {
+	issuer string
+	key    *rsa.PrivateKey
+}
+
+// newWebIDP starts a JWKS server, registers the provider on the harness store, and
+// returns the IdP for minting tokens.
+func (h *stsHarness) newWebIDP(audience string) *webIDP {
+	h.t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		h.t.Fatalf("rsa key: %v", err)
+	}
+	idp := &webIDP{key: key}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pub := &key.PublicKey
+		doc := map[string]any{"keys": []map[string]string{{
+			"kty": "RSA", "kid": webIdentityKid, "alg": "RS256",
+			"n": b64u(pub.N.Bytes()), "e": b64u(big.NewInt(int64(pub.E)).Bytes()),
+		}}}
+		out, _ := json.Marshal(doc)
+		_, _ = w.Write(out)
+	}))
+	h.t.Cleanup(srv.Close)
+	idp.issuer = srv.URL
+	h.store.SetHTTPClient(srv.Client())
+	if err := h.store.RegisterWebIdentityProvider(auth.WebIdentityProvider{
+		Name: "test", Issuer: srv.URL, Audiences: []string{audience}, JWKSURL: srv.URL,
+	}); err != nil {
+		h.t.Fatalf("RegisterWebIdentityProvider: %v", err)
+	}
+	return idp
+}
+
+// token mints a signed RS256 identity token for the given subject, audience, and
+// policy claim, valid for an hour.
+func (idp *webIDP) token(t *testing.T, sub, aud, policy string) string {
+	t.Helper()
+	now := time.Now().UTC()
+	header, _ := json.Marshal(map[string]any{"alg": "RS256", "kid": webIdentityKid, "typ": "JWT"})
+	payload, _ := json.Marshal(map[string]any{
+		"iss": idp.issuer, "sub": sub, "aud": aud,
+		"exp": now.Add(time.Hour).Unix(), "iat": now.Unix(), "policy": policy,
+	})
+	signing := b64u(header) + "." + b64u(payload)
+	sum := sha256.Sum256([]byte(signing))
+	sig, err := rsa.SignPKCS1v15(rand.Reader, idp.key, crypto.SHA256, sum[:])
+	if err != nil {
+		t.Fatalf("sign token: %v", err)
+	}
+	return signing + "." + b64u(sig)
+}
+
+func b64u(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
+
+// postForm sends an unsigned form POST to the service root, the way a web-identity
+// client (which holds no liteio credentials) calls the STS endpoint.
+func (h *stsHarness) postForm(form url.Values) result {
+	h.t.Helper()
+	resp, err := h.srv.Client().PostForm(h.srv.URL+"/", form)
+	if err != nil {
+		h.t.Fatalf("post form: %v", err)
+	}
+	defer resp.Body.Close()
+	rb, _ := io.ReadAll(resp.Body)
+	return result{status: resp.StatusCode, header: resp.Header, body: rb}
+}
+
+// webIdentityCreds parses an AssumeRoleWithWebIdentity success body into signable
+// credentials and returns the subject.
+func webIdentityCreds(t *testing.T, res result) (auth.Credentials, string) {
+	t.Helper()
+	if res.status != http.StatusOK {
+		t.Fatalf("AssumeRoleWithWebIdentity status = %d; body=%s", res.status, res.body)
+	}
+	var parsed assumeRoleWithWebIdentityResponse
+	if err := xml.Unmarshal(res.body, &parsed); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, res.body)
+	}
+	c := parsed.Result.Credentials
+	if c.AccessKeyID == "" || c.SecretAccessKey == "" || c.SessionToken == "" {
+		t.Fatalf("incomplete credentials: %+v", c)
+	}
+	return auth.Credentials{AccessKey: c.AccessKeyID, SecretKey: c.SecretAccessKey}, parsed.Result.SubjectFromWebIdentityToken
+}
+
+func TestAssumeRoleWithWebIdentityUnsigned(t *testing.T) {
+	h := newSTSHarness(t)
+	idp := h.newWebIDP("liteio")
+
+	// Admin seeds a bucket and object the federated session will read.
+	mustStatus(t, h.doAs(testCreds, http.MethodPut, "/b", nil), http.StatusOK)
+	mustStatus(t, h.doAs(testCreds, http.MethodPut, "/b/k", []byte("hello")), http.StatusOK)
+
+	// An unsigned web-identity exchange (the token is the credential) maps to the
+	// readonly policy and yields a usable session.
+	token := idp.token(t, "alice@corp", "liteio", "readonly")
+	creds, subject := webIdentityCreds(t, h.postForm(url.Values{
+		"Action": {"AssumeRoleWithWebIdentity"}, "WebIdentityToken": {token},
+	}))
+	if subject != "alice@corp" {
+		t.Fatalf("subject = %q, want alice@corp", subject)
+	}
+	// The readonly session reads but cannot write.
+	mustStatus(t, h.doAs(creds, http.MethodGet, "/b/k", nil), http.StatusOK)
+	mustStatus(t, h.doAs(creds, http.MethodPut, "/b/k2", []byte("nope")), http.StatusForbidden)
+}
+
+func TestAssumeRoleWithWebIdentityRejectsBadToken(t *testing.T) {
+	h := newSTSHarness(t)
+	h.newWebIDP("liteio")
+
+	// A missing token is a ValidationError.
+	mustSTSError(t, h.postForm(url.Values{"Action": {"AssumeRoleWithWebIdentity"}}), http.StatusBadRequest, "ValidationError")
+
+	// A garbage token is an InvalidIdentityToken.
+	mustSTSError(t, h.postForm(url.Values{
+		"Action": {"AssumeRoleWithWebIdentity"}, "WebIdentityToken": {"not.a.jwt"},
+	}), http.StatusBadRequest, "InvalidIdentityToken")
+}
+
+func TestAssumeRoleUnsignedRejected(t *testing.T) {
+	h := newSTSHarness(t)
+	// AssumeRole exchanges the caller's own credentials, so an unsigned request to
+	// it is refused even though the unsigned STS path is open for federated flows.
+	mustSTSError(t, h.postForm(url.Values{"Action": {"AssumeRole"}}), http.StatusForbidden, "AccessDenied")
 }
 
 // mustSTSError asserts the response is an STS error envelope with the wanted status

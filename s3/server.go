@@ -67,6 +67,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	vr, serr := sign.Verify(r, s.creds, s.now())
 	if serr != nil {
+		// An unsigned request may still reach the STS endpoint's federated flows
+		// (AssumeRoleWithWebIdentity and the rest), where the identity token is the
+		// credential and no SigV4 caller exists. Everything else needs a signature.
+		if s.sts != nil && r.Method == http.MethodPost && s.parseResource(r).bucket == "" {
+			s.serveSTS(w, r, requestID, nil)
+			return
+		}
 		writeError(w, requestID, r.URL.Path, APIError{Code: serr.Code, Description: serr.Message, HTTPStatus: signStatus(serr.Code)})
 		return
 	}
