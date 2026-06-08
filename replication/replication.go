@@ -9,6 +9,7 @@ import (
 	"context"
 	"io"
 	"strings"
+	"sync/atomic"
 )
 
 // Status is the per-object replication state stored in FileInfo.Metadata.
@@ -107,6 +108,25 @@ func (rc ReplicationConfig) MatchingRules(key string, skipReplica bool) []Rule {
 		}
 	}
 	return out
+}
+
+// package-level replication counters. Incremented by the object layer after
+// each replication attempt so callers can expose them via metrics.
+var (
+	cntReplicated atomic.Int64
+	cntReplFailed atomic.Int64
+)
+
+// IncReplicated records one successful replication. Called by the object layer.
+func IncReplicated() { cntReplicated.Add(1) }
+
+// IncReplFailed records one failed replication attempt. Called by the object layer.
+func IncReplFailed() { cntReplFailed.Add(1) }
+
+// ReplicationStats returns the running totals for successful and failed
+// replication operations since process start.
+func ReplicationStats() (replicated int64, failed int64) {
+	return cntReplicated.Load(), cntReplFailed.Load()
 }
 
 // ReplicaClient can replicate one object to a destination.

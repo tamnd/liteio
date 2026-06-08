@@ -11,6 +11,7 @@ import (
 
 	"github.com/tamnd/liteio/cluster/lock"
 	"github.com/tamnd/liteio/event"
+	"github.com/tamnd/liteio/replication"
 	"github.com/tamnd/liteio/storage"
 	"github.com/tamnd/liteio/tier"
 )
@@ -206,6 +207,11 @@ func (sp *ServerPools) MRFStats() MRFStats {
 		Healed:  sp.mrf.healed.Load(),
 		Failed:  sp.mrf.failed.Load(),
 	}
+}
+
+// ReplicationStats returns the process-wide replication operation counters.
+func (sp *ServerPools) ReplicationStats() (replicated int64, failed int64) {
+	return replication.ReplicationStats()
 }
 
 // healTask routes a queued heal back to the set that owns the object and repairs

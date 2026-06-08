@@ -16,10 +16,12 @@ import (
 // and diskCalls counts how often the statfs-backed rollup is probed so a test can prove
 // the collector memoizes it across the gauges of one scrape.
 type fakeClusterSource struct {
-	info      object.StorageInfo
-	usage     object.DiskUsage
-	heal      object.MRFStats
-	diskCalls int
+	info        object.StorageInfo
+	usage       object.DiskUsage
+	heal        object.MRFStats
+	diskCalls   int
+	replicated  int64
+	replFailed  int64
 }
 
 func (f *fakeClusterSource) StorageInfo() object.StorageInfo { return f.info }
@@ -30,6 +32,10 @@ func (f *fakeClusterSource) DiskUsage(context.Context) object.DiskUsage {
 }
 
 func (f *fakeClusterSource) MRFStats() object.MRFStats { return f.heal }
+
+func (f *fakeClusterSource) ReplicationStats() (int64, int64) {
+	return f.replicated, f.replFailed
+}
 
 // drives builds a slice with the first online of them up reachable and the rest down.
 func drives(total, up int) []object.DriveInfo {
