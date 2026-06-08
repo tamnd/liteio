@@ -26,6 +26,7 @@ import (
 // stay stable across versions.
 const (
 	mIsOnline       = "IsOnline"
+	mDiskInfo       = "DiskInfo"
 	mMakeVol        = "MakeVol"
 	mStatVol        = "StatVol"
 	mListVols       = "ListVols"
@@ -157,6 +158,9 @@ type listDirArgs struct {
 type boolResult struct {
 	OK bool `msgpack:"ok"`
 }
+type diskInfoResult struct {
+	Info storage.DiskInfo `msgpack:"di"`
+}
 type volInfoResult struct {
 	Vol storage.VolInfo `msgpack:"vi"`
 }
@@ -208,6 +212,17 @@ func (s *Storage) IsOnline() bool {
 		return false
 	}
 	return res.OK
+}
+
+// DiskInfo implements storage.StorageAPI over RPC, reporting the peer drive's
+// filesystem capacity. The peer's ErrDiskInfoUnsupported survives the round trip
+// as the message of a RemoteError, not the sentinel, since it is not in the
+// storageErrors table; callers that need to branch on it should rely on a nil
+// DiskInfo rather than errors.Is across the wire.
+func (s *Storage) DiskInfo(ctx context.Context) (storage.DiskInfo, error) {
+	var res diskInfoResult
+	err := s.unary(ctx, mDiskInfo, struct{}{}, &res)
+	return res.Info, err
 }
 
 // MakeVol implements storage.StorageAPI over RPC.
@@ -336,6 +351,14 @@ func Register(mux *rpc.Mux, local storage.StorageAPI) {
 
 	mux.Register(mIsOnline, func(_ context.Context, _ msgpack.RawMessage, _ io.Reader, resp *rpc.Response) error {
 		resp.SetResult(boolResult{OK: local.IsOnline()})
+		return nil
+	})
+	mux.Register(mDiskInfo, func(ctx context.Context, _ msgpack.RawMessage, _ io.Reader, resp *rpc.Response) error {
+		di, err := local.DiskInfo(ctx)
+		if err != nil {
+			return err
+		}
+		resp.SetResult(diskInfoResult{Info: di})
 		return nil
 	})
 	mux.Register(mMakeVol, func(ctx context.Context, args msgpack.RawMessage, _ io.Reader, _ *rpc.Response) error {

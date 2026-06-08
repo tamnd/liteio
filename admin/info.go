@@ -3,17 +3,21 @@
 package admin
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/tamnd/liteio/object"
 )
 
-// InfoSource is the slice of the object layer the info and health endpoints read:
-// a snapshot of the deployment topology and drive reachability. *object.ServerPools
-// satisfies it. The interface keeps admin's dependency on the object layer to one
-// read-only call and lets the endpoints be tested against a fake.
+// InfoSource is the slice of the object layer the info and health endpoints read.
+// StorageInfo is a cheap topology-and-reachability snapshot the health poll uses;
+// DiskUsage performs a statfs on every drive, so it carries a context and the info
+// endpoint calls it once per request. *object.ServerPools satisfies both. The
+// interface keeps admin's dependency on the object layer to two read-only calls and
+// lets the endpoints be tested against a fake.
 type InfoSource interface {
 	StorageInfo() object.StorageInfo
+	DiskUsage(ctx context.Context) object.DiskUsage
 }
 
 // driveInfo is the wire shape of one drive in the info response.
@@ -33,6 +37,16 @@ type setInfo struct {
 	ReadQuorum  int         `json:"readQuorum"`
 	Healthy     bool        `json:"healthy"`   // every drive online
 	Available   bool        `json:"available"` // at least read quorum online
+
+	// Capacity, in bytes, of the filesystems backing the set. Raw is the underlying
+	// total; usable is the data fraction (raw scaled by readQuorum/driveCount).
+	// DrivesReporting is how many drives answered the statfs probe; below DriveCount
+	// the figures are a floor, since an offline or unsupported drive adds nothing.
+	RawCapacity     uint64 `json:"rawCapacity"`
+	RawFree         uint64 `json:"rawFree"`
+	UsableCapacity  uint64 `json:"usableCapacity"`
+	UsableFree      uint64 `json:"usableFree"`
+	DrivesReporting int    `json:"drivesReporting"`
 }
 
 // poolInfo is the wire shape of one server pool.
@@ -50,6 +64,12 @@ type serverInfoResponse struct {
 	SetCount     int        `json:"setCount"`
 	DriveCount   int        `json:"driveCount"`
 	OnlineDrives int        `json:"onlineDriveCount"`
+
+	// Deployment-wide capacity in bytes, summed over every set.
+	RawCapacity    uint64 `json:"rawCapacity"`
+	RawFree        uint64 `json:"rawFree"`
+	UsableCapacity uint64 `json:"usableCapacity"`
+	UsableFree     uint64 `json:"usableFree"`
 }
 
 // healthResponse is the lighter health summary: an overall status plus the count of
@@ -61,18 +81,27 @@ type healthResponse struct {
 	Unavailable int    `json:"unavailableSetCount"`
 }
 
-// serverInfo reports the full deployment topology and drive reachability (doc 10.2).
-func (s *Server) serverInfo(w http.ResponseWriter, _ *http.Request) {
+// serverInfo reports the full deployment topology, drive reachability, and capacity
+// (doc 10.2). It pairs the topology snapshot with a statfs-backed usage probe; both
+// walk pools then sets in the same order, so the usage of the Nth set lines up by
+// index.
+func (s *Server) serverInfo(w http.ResponseWriter, r *http.Request) {
 	si := s.info.StorageInfo()
+	usage := s.info.DiskUsage(r.Context())
 	resp := serverInfoResponse{
 		Version:      s.version,
 		DeploymentID: si.DeploymentID,
 		Pools:        make([]poolInfo, 0, len(si.Pools)),
 	}
+	setIdx := 0
 	for _, p := range si.Pools {
 		pi := poolInfo{Sets: make([]setInfo, 0, len(p.Sets))}
 		for _, set := range p.Sets {
 			si := summarizeSet(set)
+			if setIdx < len(usage.Sets) {
+				applyUsage(&si, usage.Sets[setIdx])
+			}
+			setIdx++
 			resp.DriveCount += si.DriveCount
 			resp.OnlineDrives += si.OnlineCount
 			resp.SetCount++
@@ -81,7 +110,20 @@ func (s *Server) serverInfo(w http.ResponseWriter, _ *http.Request) {
 		resp.Pools = append(resp.Pools, pi)
 	}
 	resp.PoolCount = len(resp.Pools)
+	resp.RawCapacity = usage.RawTotal
+	resp.RawFree = usage.RawFree
+	resp.UsableCapacity = usage.UsableTotal
+	resp.UsableFree = usage.UsableFree
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// applyUsage copies a set's capacity figures onto its wire shape.
+func applyUsage(si *setInfo, su object.SetUsage) {
+	si.RawCapacity = su.RawTotal
+	si.RawFree = su.RawFree
+	si.UsableCapacity = su.UsableTotal
+	si.UsableFree = su.UsableFree
+	si.DrivesReporting = su.DrivesReporting
 }
 
 // health reports the rolled-up health of every set: degraded when a drive is down,

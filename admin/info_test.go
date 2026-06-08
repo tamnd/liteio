@@ -3,6 +3,7 @@
 package admin
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,11 +13,15 @@ import (
 	"github.com/tamnd/liteio/object"
 )
 
-// fakeInfo is a static topology source so the info and health endpoints can be
-// tested without standing up a real object layer.
-type fakeInfo struct{ si object.StorageInfo }
+// fakeInfo is a static topology and usage source so the info and health endpoints
+// can be tested without standing up a real object layer.
+type fakeInfo struct {
+	si object.StorageInfo
+	du object.DiskUsage
+}
 
-func (f fakeInfo) StorageInfo() object.StorageInfo { return f.si }
+func (f fakeInfo) StorageInfo() object.StorageInfo            { return f.si }
+func (f fakeInfo) DiskUsage(context.Context) object.DiskUsage { return f.du }
 
 // healthySet is one set of n drives, parity m, all online.
 func healthySet(n, m int) object.SetInfo {
@@ -46,13 +51,19 @@ func topology(sets ...object.SetInfo) object.StorageInfo {
 // newInfoHarness builds a harness whose admin server reports the given topology.
 func newInfoHarness(t *testing.T, si object.StorageInfo) *harness {
 	t.Helper()
+	return newInfoUsageHarness(t, si, object.DiskUsage{})
+}
+
+// newInfoUsageHarness is newInfoHarness with an explicit capacity rollup.
+func newInfoUsageHarness(t *testing.T, si object.StorageInfo, du object.DiskUsage) *harness {
+	t.Helper()
 	store := auth.NewStore(adminCreds.AccessKey, adminCreds.SecretKey)
 	if err := store.AddUser(auth.User{AccessKey: viewerCreds.AccessKey, SecretKey: viewerCreds.SecretKey, Policies: []string{"readonly"}}); err != nil {
 		t.Fatalf("add viewer: %v", err)
 	}
 	creds := auth.NewStaticStore(adminCreds, viewerCreds)
 	server := NewServer(store, creds,
-		WithInfo(fakeInfo{si}),
+		WithInfo(fakeInfo{si: si, du: du}),
 		WithVersion("v1.2.3"),
 		WithClock(func() time.Time { return time.Now().UTC() }),
 	)
@@ -87,6 +98,31 @@ func TestServerInfoReportsTopology(t *testing.T) {
 	}
 	if s1.Healthy || !s1.Available || s1.OnlineCount != 3 || s1.ReadQuorum != 2 {
 		t.Errorf("set1 = %+v", s1)
+	}
+}
+
+func TestServerInfoReportsCapacity(t *testing.T) {
+	// Two sets, each with its own capacity; the endpoint must surface both per-set
+	// figures and the deployment rollup, lined up by walk order.
+	du := object.DiskUsage{
+		Sets: []object.SetUsage{
+			{RawTotal: 6000, RawFree: 3000, UsableTotal: 4000, UsableFree: 2000, DriveCount: 6, DrivesReporting: 6},
+			{RawTotal: 4000, RawFree: 1000, UsableTotal: 2000, UsableFree: 500, DriveCount: 4, DrivesReporting: 3},
+		},
+		RawTotal: 10000, RawFree: 4000, UsableTotal: 6000, UsableFree: 2500,
+	}
+	h := newInfoUsageHarness(t, topology(healthySet(6, 2), degradedSet(4, 2, 1)), du)
+	info := decode[serverInfoResponse](t, h.admin(http.MethodGet, "/liteio/admin/v1/info", nil))
+
+	if info.RawCapacity != 10000 || info.UsableCapacity != 6000 || info.UsableFree != 2500 {
+		t.Errorf("rollup capacity = %+v", info)
+	}
+	s0, s1 := info.Pools[0].Sets[0], info.Pools[0].Sets[1]
+	if s0.RawCapacity != 6000 || s0.UsableCapacity != 4000 || s0.DrivesReporting != 6 {
+		t.Errorf("set0 capacity = %+v", s0)
+	}
+	if s1.RawCapacity != 4000 || s1.UsableFree != 500 || s1.DrivesReporting != 3 {
+		t.Errorf("set1 capacity = %+v", s1)
 	}
 }
 
@@ -146,7 +182,7 @@ func TestInfoRoutesAbsentWithoutSource(t *testing.T) {
 }
 
 func BenchmarkServerInfo(b *testing.B) {
-	src := fakeInfo{topology(healthySet(8, 4), healthySet(8, 4), degradedSet(8, 4, 1))}
+	src := fakeInfo{si: topology(healthySet(8, 4), healthySet(8, 4), degradedSet(8, 4, 1))}
 	store := auth.NewStore(adminCreds.AccessKey, adminCreds.SecretKey)
 	server := NewServer(store, auth.NewStaticStore(adminCreds), WithInfo(src), WithVersion("dev"))
 	req := httptest.NewRequest(http.MethodGet, "/liteio/admin/v1/info", nil)

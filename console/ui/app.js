@@ -90,6 +90,8 @@ async function loadDashboard() {
       <div><dt>Status</dt><dd class="status-${esc(health.status)}">${esc(health.status)}</dd></div>
       <div><dt>Pools / sets</dt><dd>${info.poolCount} / ${info.setCount}</dd></div>
       <div><dt>Drives online</dt><dd>${info.onlineDriveCount} / ${info.driveCount}</dd></div>
+      <div><dt>Usable free</dt><dd>${bytes(info.usableFree)} / ${bytes(info.usableCapacity)}</dd></div>
+      <div><dt>Raw capacity</dt><dd>${bytes(info.rawCapacity)}</dd></div>
     </dl>
     ${renderSets(info)}`;
 }
@@ -101,11 +103,16 @@ function renderSets(info) {
     let set = 0;
     for (const s of p.sets) {
       const state = !s.available ? "unavailable" : !s.healthy ? "degraded" : "healthy";
+      // A set reporting fewer drives than it has flags the capacity as partial.
+      const cap = s.drivesReporting < s.driveCount
+        ? `${bytes(s.usableFree)} / ${bytes(s.usableCapacity)} *`
+        : `${bytes(s.usableFree)} / ${bytes(s.usableCapacity)}`;
       rows.push(`<tr>
         <td>${pool}.${set}</td>
         <td>${s.onlineCount} / ${s.driveCount}</td>
         <td>${s.parity}</td>
         <td>${s.readQuorum}</td>
+        <td>${cap}</td>
         <td class="status-${state}">${state}</td>
       </tr>`);
       set++;
@@ -114,9 +121,23 @@ function renderSets(info) {
   }
   return `<h2>Erasure sets</h2>
     <table class="sets">
-      <thead><tr><th>Set</th><th>Online</th><th>Parity (M)</th><th>Read quorum (K)</th><th>State</th></tr></thead>
+      <thead><tr><th>Set</th><th>Online</th><th>Parity (M)</th><th>Read quorum (K)</th><th>Usable free</th><th>State</th></tr></thead>
       <tbody>${rows.join("")}</tbody>
-    </table>`;
+    </table>
+    <p class="muted">* capacity is partial: not every drive reported.</p>`;
+}
+
+// bytes formats a byte count in binary units (KiB, MiB, ...) for the dashboard.
+// A zero or missing value reads as "0 B" rather than blank.
+function bytes(n) {
+  n = Number(n) || 0;
+  const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
+  let u = 0;
+  while (n >= 1024 && u < units.length - 1) {
+    n /= 1024;
+    u++;
+  }
+  return `${u === 0 ? n : n.toFixed(1)} ${units[u]}`;
 }
 
 // esc escapes text before it goes into innerHTML, so a drive endpoint or version
