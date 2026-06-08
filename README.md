@@ -177,7 +177,8 @@ the living source of truth and is updated as milestones land.
 | Bucket-policy persistence + ?policy GET/PUT/DELETE endpoint | implemented (M4) |
 | Front-door authorization (per-request action/ARN/condition mapping, identity + bucket-policy combine) | implemented (M4) |
 | Signed admin REST API (IAM CRUD over HTTP, SigV4-authenticated, action-gated) | implemented (M4) |
-| OIDC/LDAP federation / STS endpoint | planned (M4) |
+| STS endpoint (AssumeRole over signed POST form, sessions sign through one authority) | implemented (M4) |
+| OIDC/LDAP/certificate federation flows | planned (M4) |
 | Free web console | planned (M5) |
 | Lifecycle / encryption / object lock | planned (M6) |
 | Replication / tiering / events | planned (M7) |
