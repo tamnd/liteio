@@ -15,6 +15,11 @@ const arnPrefix = "arn:aws:s3:::"
 type Request struct {
 	Action   string
 	Resource string
+	// Context carries the condition keys a statement's Condition block is tested
+	// against (for example aws:SourceIp, aws:SecureTransport, s3:prefix). The
+	// front door fills it from the HTTP request; nil means no context, so a
+	// statement with conditions on a present key will not match.
+	Context map[string]string
 }
 
 // BucketARN returns the ARN naming a bucket: arn:aws:s3:::bucket.
@@ -74,9 +79,12 @@ func decide(policies []Policy, req Request) Decision {
 }
 
 // matches reports whether the statement applies to the request: its action side
-// covers req.Action and its resource side covers req.Resource.
+// covers req.Action, its resource side covers req.Resource, and every condition
+// in its Condition block holds against req.Context.
 func (st *Statement) matches(req Request) bool {
-	return st.actionMatches(req.Action) && st.resourceMatches(req.Resource)
+	return st.actionMatches(req.Action) &&
+		st.resourceMatches(req.Resource) &&
+		st.parsedCondition.satisfied(req.Context)
 }
 
 // actionMatches applies the statement's Action or NotAction set to action.
