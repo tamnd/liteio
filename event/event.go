@@ -14,6 +14,7 @@ import (
 // EventName identifies the S3 event that occurred.
 type EventName string
 
+// S3 event name constants matching the AWS event notification schema.
 const (
 	ObjectCreatedPut                     EventName = "s3:ObjectCreated:Put"
 	ObjectCreatedPost                    EventName = "s3:ObjectCreated:Post"
