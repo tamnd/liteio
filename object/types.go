@@ -20,6 +20,7 @@ import (
 
 	"github.com/tamnd/liteio/event"
 	"github.com/tamnd/liteio/object/meta"
+	"github.com/tamnd/liteio/tier"
 )
 
 // ObjectInfo is the engine/handler view of one object version. It is the value
@@ -39,6 +40,17 @@ type ObjectInfo struct {
 	UserDefined  map[string]string
 	Parts        []meta.ObjectPartInfo
 	Erasure      meta.ErasureInfo
+
+	// Tier is the name of the remote tier holding this object's data, or empty
+	// for objects stored locally. Set from FileInfo.Metadata[tier.MetaName].
+	Tier string
+	// TierKey is the remote key under which the data is stored in the tier bucket.
+	TierKey string
+	// RestoreExpires is the expiry time of a completed RestoreObject operation.
+	// Zero means no active restore.
+	RestoreExpires time.Time
+	// RestoreOngoing is true while a RestoreObject is in progress.
+	RestoreOngoing bool
 }
 
 // ObjectOptions carries per-call inputs that do not belong in the positional
@@ -278,6 +290,14 @@ func toObjectInfo(bucket, object string, fi meta.FileInfo) ObjectInfo {
 	}
 	if fi.Metadata != nil {
 		oi.ContentType = fi.Metadata["content-type"]
+		oi.Tier = fi.Metadata[tier.MetaName]
+		oi.TierKey = fi.Metadata[tier.MetaKey]
+		if exp := fi.Metadata[tier.MetaRestoreExpires]; exp != "" {
+			if t, err := time.Parse(time.RFC3339, exp); err == nil {
+				oi.RestoreExpires = t
+			}
+		}
+		oi.RestoreOngoing = fi.Metadata[tier.MetaRestoreOngoing] == "true"
 	}
 	return oi
 }
@@ -362,4 +382,12 @@ type ObjectLayer interface {
 	AbortMultipartUpload(ctx context.Context, bucket, object, uploadID string, opts ObjectOptions) error
 	ListObjectParts(ctx context.Context, bucket, object, uploadID string, partNumberMarker, maxParts int, opts ObjectOptions) (ListPartsInfo, error)
 	ListMultipartUploads(ctx context.Context, bucket, prefix, keyMarker, uploadIDMarker, delimiter string, maxUploads int) (ListMultipartsInfo, error)
+
+	// tiering: remote-tier config management and object lifecycle transitions
+	SetTierConfig(ctx context.Context, cfg tier.TierConfig) error
+	GetTierConfig(ctx context.Context, name string) (tier.TierConfig, error)
+	ListTierConfigs(ctx context.Context) ([]tier.TierConfig, error)
+	DeleteTierConfig(ctx context.Context, name string) error
+	TransitionObject(ctx context.Context, bucket, object, tierName string, opts ObjectOptions) error
+	RestoreObject(ctx context.Context, bucket, object, versionID string, days int) error
 }

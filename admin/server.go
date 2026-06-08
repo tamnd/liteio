@@ -74,6 +74,7 @@ type Server struct {
 	iam     IAM
 	creds   auth.CredentialStore // SigV4 secret lookup
 	info    InfoSource           // deployment topology for info/health (nil omits those routes)
+	tiers   TierLayer            // tier config management (nil omits those routes)
 	version string               // build version reported by the info endpoint
 	now     func() time.Time     // clock seam for signature skew (tests inject)
 	mux     *http.ServeMux
@@ -148,6 +149,14 @@ func (s *Server) routes() *http.ServeMux {
 			route{"GET " + apiPrefix + "/health", "admin:HealthInfo", s.health},
 		)
 	}
+	// Tier management routes are registered regardless of whether tiers is wired;
+	// the handlers return 501 when s.tiers is nil.
+	rs = append(rs,
+		route{"GET " + apiPrefix + "/tiers", "admin:ListTiers", s.listTiers},
+		route{"GET " + apiPrefix + "/tiers/{name}", "admin:GetTier", s.getTier},
+		route{"PUT " + apiPrefix + "/tiers/{name}", "admin:SetTier", s.putTier},
+		route{"DELETE " + apiPrefix + "/tiers/{name}", "admin:DeleteTier", s.deleteTier},
+	)
 	mux := http.NewServeMux()
 	s.actions = make(map[string]string, len(rs))
 	for _, r := range rs {

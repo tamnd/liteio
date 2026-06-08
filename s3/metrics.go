@@ -253,6 +253,8 @@ func objectOperation(r *http.Request, q url.Values) string {
 			return "CreateMultipartUpload"
 		case uploadID != "":
 			return "CompleteMultipartUpload"
+		case q.Has("restore"):
+			return "RestoreObject"
 		}
 	case http.MethodDelete:
 		if uploadID != "" {

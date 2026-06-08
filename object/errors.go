@@ -95,4 +95,10 @@ var (
 	// ErrNoSuchBucketNotification is returned when no notification configuration
 	// has been set for a bucket.
 	ErrNoSuchBucketNotification = errors.New("object: no such bucket notification configuration")
+	// ErrNoSuchTierConfig is returned when no tier configuration exists with the
+	// given name, or when no tier configs have been set at all.
+	ErrNoSuchTierConfig = errors.New("object: no such tier configuration")
+	// ErrNotTiered is returned by RestoreObject when the target object is not
+	// transitioned to a remote tier.
+	ErrNotTiered = errors.New("object: object is not tiered")
 )

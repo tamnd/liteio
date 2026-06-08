@@ -13,6 +13,7 @@ import (
 	"github.com/tamnd/liteio/event"
 	"github.com/tamnd/liteio/object/placement"
 	"github.com/tamnd/liteio/storage"
+	"github.com/tamnd/liteio/tier"
 )
 
 // SetConfig describes one erasure set: its drives and parity count (M).
@@ -77,6 +78,10 @@ type ServerPools struct {
 
 	// nowFn overrides time.Now for testing. Nil uses time.Now.
 	nowFn func() time.Time
+
+	// tierMu guards tierClients.
+	tierMu      sync.RWMutex
+	tierClients map[string]tier.RemoteClient // keyed by tier name
 }
 
 // CacheNotifier carries a node's local metacache events to its peers so listings
@@ -143,6 +148,7 @@ func NewServerPools(deploymentID [16]byte, pools []PoolConfig, opts ...Option) (
 		cache:        newMetacache(),
 		nodeID:       "local",
 		nsLockers:    []lock.Locker{lock.NewLocalLocker("local")},
+		tierClients:  make(map[string]tier.RemoteClient),
 	}
 	for _, pc := range pools {
 		if len(pc.Sets) == 0 {
@@ -333,8 +339,19 @@ func (sp *ServerPools) PutObject(ctx context.Context, bucket, object string, r *
 	return oi, err
 }
 
-// GetObject implements ObjectLayer: it routes to the owning set and reads the object.
+// GetObject implements ObjectLayer: it routes to the owning set and reads the
+// object. For objects transitioned to a remote tier (Tier field non-empty), it
+// fetches the data from the remote tier client instead of local drives.
 func (sp *ServerPools) GetObject(ctx context.Context, bucket, object string, opts ObjectOptions) (*GetObjectReader, error) {
+	// Peek at the object info to detect tier stubs before reading shards.
+	oi, err := sp.route(object).getObjectInfo(ctx, bucket, object, opts)
+	if err != nil {
+		return nil, err
+	}
+	if oi.Tier != "" && oi.RestoreExpires.IsZero() && !oi.RestoreOngoing {
+		// Data lives on the remote tier; fetch transparently.
+		return sp.getObjectTiered(ctx, oi, opts)
+	}
 	return sp.route(object).getObject(ctx, bucket, object, opts)
 }
 
