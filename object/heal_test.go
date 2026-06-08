@@ -199,7 +199,6 @@ func TestReactiveHealViaQueue(t *testing.T) {
 	ctx := t.Context()
 	sp, fault := healLayer(t, 4, 2)
 	set := sp.route("k")
-	sp.StartHealing(ctx)
 	if err := sp.MakeBucket(ctx, "b", MakeBucketOptions{}); err != nil {
 		t.Fatalf("MakeBucket: %v", err)
 	}
@@ -210,7 +209,12 @@ func TestReactiveHealViaQueue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PutObject (one drive down): %v", err)
 	}
+	// The write buffered a heal task in the MRF queue. Restore the laggard before the
+	// worker starts so the heal runs against an online drive; starting the worker
+	// earlier would race the repair against fault.up() and the heal could fail
+	// writing to a still-down drive.
 	fault.up()
+	sp.StartHealing(ctx)
 
 	// Wait for the worker to finish a heal task (it increments the counter only
 	// after the repair completes, so this also orders the assertions below).
