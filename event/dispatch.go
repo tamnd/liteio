@@ -155,7 +155,7 @@ func (d *Dispatcher) post(url string, records []Record) error {
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := d.client.Do(req)
 		if err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode < 300 {
 				return nil
 			}
