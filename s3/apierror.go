@@ -41,40 +41,40 @@ type errorResponse struct {
 // here; the table in doc 02 §2.8 is the full target and entries are added as the
 // operations that raise them land.
 var (
-	errNoSuchBucket            = APIError{"NoSuchBucket", "The specified bucket does not exist.", http.StatusNotFound}
-	errNoSuchKey               = APIError{"NoSuchKey", "The specified key does not exist.", http.StatusNotFound}
-	errNoSuchVersion           = APIError{"NoSuchVersion", "The specified version does not exist.", http.StatusNotFound}
-	errBucketNotEmpty          = APIError{"BucketNotEmpty", "The bucket you tried to delete is not empty.", http.StatusConflict}
-	errBucketAlreadyOwnedByYou = APIError{"BucketAlreadyOwnedByYou", "Your previous request to create the named bucket succeeded and you already own it.", http.StatusConflict}
-	errInvalidBucketName       = APIError{"InvalidBucketName", "The specified bucket is not valid.", http.StatusBadRequest}
-	errInvalidArgument         = APIError{"InvalidArgument", "Invalid Argument.", http.StatusBadRequest}
-	errInvalidRange            = APIError{"InvalidRange", "The requested range is not satisfiable.", http.StatusRequestedRangeNotSatisfiable}
-	errPreconditionFailed      = APIError{"PreconditionFailed", "At least one of the preconditions you specified did not hold.", http.StatusPreconditionFailed}
-	errNoSuchUpload            = APIError{"NoSuchUpload", "The specified multipart upload does not exist. The upload ID may be invalid, or the upload may have been aborted or completed.", http.StatusNotFound}
-	errInvalidPart             = APIError{"InvalidPart", "One or more of the specified parts could not be found. The part may not have been uploaded, or the specified ETag may not match the part's ETag.", http.StatusBadRequest}
-	errInvalidPartOrder        = APIError{"InvalidPartOrder", "The list of parts was not in ascending order. Parts must be ordered by part number.", http.StatusBadRequest}
-	errEntityTooSmall          = APIError{"EntityTooSmall", "Your proposed upload is smaller than the minimum allowed object size. Each part but the last must be at least 5 MiB.", http.StatusBadRequest}
-	errInvalidRequest          = APIError{"InvalidRequest", "Invalid Request.", http.StatusBadRequest}
-	errInvalidCopySource       = APIError{"InvalidArgument", "Copy Source must mention the source bucket and key: sourcebucket/sourcekey.", http.StatusBadRequest}
-	errInvalidCopyDest         = APIError{"InvalidRequest", "This copy request is illegal because it is trying to copy an object to itself without changing the object's metadata, storage class, website redirect location or encryption attributes.", http.StatusBadRequest}
-	errMalformedXML            = APIError{"MalformedXML", "The XML you provided was not well-formed or did not validate against our published schema.", http.StatusBadRequest}
-	errMalformedPolicy         = APIError{"MalformedPolicy", "The policy is not in the valid JSON format or contains an unsupported element.", http.StatusBadRequest}
-	errNoSuchBucketPolicy              = APIError{"NoSuchBucketPolicy", "The bucket policy does not exist.", http.StatusNotFound}
-	errNoSuchTagSet                    = APIError{"NoSuchTagSet", "The TagSet does not exist.", http.StatusNotFound}
-	errNoSuchLifecycleConfiguration    = APIError{"NoSuchLifecycleConfiguration", "The lifecycle configuration does not exist.", http.StatusNotFound}
-	errInvalidTag              = APIError{"InvalidTag", "The Tag value you have provided is invalid.", http.StatusBadRequest}
-	errBadTagging              = APIError{"InvalidTag", "Object tags exceed 10 or bucket tags exceed 50.", http.StatusBadRequest}
-	errMissingContentLength    = APIError{"MissingContentLength", "You must provide the Content-Length HTTP header.", http.StatusBadRequest}
-	errBadDigest               = APIError{"BadDigest", "The Content-MD5 you specified did not match what we received.", http.StatusBadRequest}
-	errAccessDenied            = APIError{"AccessDenied", "Access Denied.", http.StatusForbidden}
-	errSignatureDoesNotMatch   = APIError{"SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.", http.StatusForbidden}
-	errInvalidAccessKeyID      = APIError{"InvalidAccessKeyId", "The access key Id you provided does not exist in our records.", http.StatusForbidden}
-	errRequestTimeTooSkewed    = APIError{"RequestTimeTooSkewed", "The difference between the request time and the server's time is too large.", http.StatusForbidden}
-	errMethodNotAllowed        = APIError{"MethodNotAllowed", "The specified method is not allowed against this resource.", http.StatusMethodNotAllowed}
-	errMissingSecurityHeader   = APIError{"MissingSecurityHeader", "Your request is missing a required header.", http.StatusBadRequest}
-	errSlowDown                = APIError{"SlowDown", "Please reduce your request rate.", http.StatusServiceUnavailable}
-	errInternalError           = APIError{"InternalError", "We encountered an internal error. Please try again.", http.StatusInternalServerError}
-	errNotImplemented          = APIError{"NotImplemented", "A header or operation you provided implies functionality that is not implemented.", http.StatusNotImplemented}
+	errNoSuchBucket                 = APIError{"NoSuchBucket", "The specified bucket does not exist.", http.StatusNotFound}
+	errNoSuchKey                    = APIError{"NoSuchKey", "The specified key does not exist.", http.StatusNotFound}
+	errNoSuchVersion                = APIError{"NoSuchVersion", "The specified version does not exist.", http.StatusNotFound}
+	errBucketNotEmpty               = APIError{"BucketNotEmpty", "The bucket you tried to delete is not empty.", http.StatusConflict}
+	errBucketAlreadyOwnedByYou      = APIError{"BucketAlreadyOwnedByYou", "Your previous request to create the named bucket succeeded and you already own it.", http.StatusConflict}
+	errInvalidBucketName            = APIError{"InvalidBucketName", "The specified bucket is not valid.", http.StatusBadRequest}
+	errInvalidArgument              = APIError{"InvalidArgument", "Invalid Argument.", http.StatusBadRequest}
+	errInvalidRange                 = APIError{"InvalidRange", "The requested range is not satisfiable.", http.StatusRequestedRangeNotSatisfiable}
+	errPreconditionFailed           = APIError{"PreconditionFailed", "At least one of the preconditions you specified did not hold.", http.StatusPreconditionFailed}
+	errNoSuchUpload                 = APIError{"NoSuchUpload", "The specified multipart upload does not exist. The upload ID may be invalid, or the upload may have been aborted or completed.", http.StatusNotFound}
+	errInvalidPart                  = APIError{"InvalidPart", "One or more of the specified parts could not be found. The part may not have been uploaded, or the specified ETag may not match the part's ETag.", http.StatusBadRequest}
+	errInvalidPartOrder             = APIError{"InvalidPartOrder", "The list of parts was not in ascending order. Parts must be ordered by part number.", http.StatusBadRequest}
+	errEntityTooSmall               = APIError{"EntityTooSmall", "Your proposed upload is smaller than the minimum allowed object size. Each part but the last must be at least 5 MiB.", http.StatusBadRequest}
+	errInvalidRequest               = APIError{"InvalidRequest", "Invalid Request.", http.StatusBadRequest}
+	errInvalidCopySource            = APIError{"InvalidArgument", "Copy Source must mention the source bucket and key: sourcebucket/sourcekey.", http.StatusBadRequest}
+	errInvalidCopyDest              = APIError{"InvalidRequest", "This copy request is illegal because it is trying to copy an object to itself without changing the object's metadata, storage class, website redirect location or encryption attributes.", http.StatusBadRequest}
+	errMalformedXML                 = APIError{"MalformedXML", "The XML you provided was not well-formed or did not validate against our published schema.", http.StatusBadRequest}
+	errMalformedPolicy              = APIError{"MalformedPolicy", "The policy is not in the valid JSON format or contains an unsupported element.", http.StatusBadRequest}
+	errNoSuchBucketPolicy           = APIError{"NoSuchBucketPolicy", "The bucket policy does not exist.", http.StatusNotFound}
+	errNoSuchTagSet                 = APIError{"NoSuchTagSet", "The TagSet does not exist.", http.StatusNotFound}
+	errNoSuchLifecycleConfiguration = APIError{"NoSuchLifecycleConfiguration", "The lifecycle configuration does not exist.", http.StatusNotFound}
+	errInvalidTag                   = APIError{"InvalidTag", "The Tag value you have provided is invalid.", http.StatusBadRequest}
+	errBadTagging                   = APIError{"InvalidTag", "Object tags exceed 10 or bucket tags exceed 50.", http.StatusBadRequest}
+	errMissingContentLength         = APIError{"MissingContentLength", "You must provide the Content-Length HTTP header.", http.StatusBadRequest}
+	errBadDigest                    = APIError{"BadDigest", "The Content-MD5 you specified did not match what we received.", http.StatusBadRequest}
+	errAccessDenied                 = APIError{"AccessDenied", "Access Denied.", http.StatusForbidden}
+	errSignatureDoesNotMatch        = APIError{"SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.", http.StatusForbidden}
+	errInvalidAccessKeyID           = APIError{"InvalidAccessKeyId", "The access key Id you provided does not exist in our records.", http.StatusForbidden}
+	errRequestTimeTooSkewed         = APIError{"RequestTimeTooSkewed", "The difference between the request time and the server's time is too large.", http.StatusForbidden}
+	errMethodNotAllowed             = APIError{"MethodNotAllowed", "The specified method is not allowed against this resource.", http.StatusMethodNotAllowed}
+	errMissingSecurityHeader        = APIError{"MissingSecurityHeader", "Your request is missing a required header.", http.StatusBadRequest}
+	errSlowDown                     = APIError{"SlowDown", "Please reduce your request rate.", http.StatusServiceUnavailable}
+	errInternalError                = APIError{"InternalError", "We encountered an internal error. Please try again.", http.StatusInternalServerError}
+	errNotImplemented               = APIError{"NotImplemented", "A header or operation you provided implies functionality that is not implemented.", http.StatusNotImplemented}
 )
 
 // toAPIError maps an object-layer (or lower) error to its S3 catalog entry. A nil
