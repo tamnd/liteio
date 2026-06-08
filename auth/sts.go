@@ -31,12 +31,21 @@ const (
 )
 
 // sessionRecord is the stored state of an STS session: the credential to verify
-// signatures against, the principal it was assumed from (root or a user access
-// key), the optional narrowing policy, and when it stops being valid.
+// signatures against, the base permissions, an optional narrowing policy, and when
+// it stops being valid.
+//
+// A session has its base permissions one of two ways. An AssumeRole session names
+// a parent identity (root or a user access key) and inherits its rights. A
+// federated session (AssumeRoleWithWebIdentity and the other federated flows) has
+// no parent in the store — its base is the policy set the provider's claims mapped
+// to, carried in basePolicies, and subject is the external identity for ARN and
+// aws:username context.
 type sessionRecord struct {
 	secretKey    string
 	sessionToken string
-	parent       string
+	parent       string   // root or user access key; "" for a federated session
+	basePolicies []Policy // base permissions for a federated session (parent == "")
+	subject      string   // external subject for a federated session
 	policy       *Policy
 	expiry       time.Time
 }
@@ -82,6 +91,19 @@ func (s *Store) AssumeRole(parentKey string, sessionPolicy *Policy, ttl time.Dur
 		}
 	}
 
+	rec := &sessionRecord{
+		parent: parentKey,
+		expiry: s.now().Add(clampDuration(ttl)),
+	}
+	return s.mintSession(rec, sessionPolicy)
+}
+
+// mintSession fills a partly-built session record with fresh random credentials,
+// attaches a deep copy of the optional narrowing policy, stores it, and returns the
+// client-facing Session. The caller holds the lock and has set the base fields
+// (parent or basePolicies/subject) and expiry. It is the one place credentials are
+// generated, shared by AssumeRole and the federated flows.
+func (s *Store) mintSession(rec *sessionRecord, sessionPolicy *Policy) (Session, error) {
 	accessKey, err := s.freshAccessKey()
 	if err != nil {
 		return Session{}, err
@@ -95,13 +117,8 @@ func (s *Store) AssumeRole(parentKey string, sessionPolicy *Policy, ttl time.Dur
 		return Session{}, err
 	}
 
-	expiry := s.now().Add(clampDuration(ttl))
-	rec := &sessionRecord{
-		secretKey:    secretKey,
-		sessionToken: token,
-		parent:       parentKey,
-		expiry:       expiry,
-	}
+	rec.secretKey = secretKey
+	rec.sessionToken = token
 	if sessionPolicy != nil {
 		p := *sessionPolicy
 		p.Statements = append([]Statement(nil), sessionPolicy.Statements...)
@@ -113,7 +130,7 @@ func (s *Store) AssumeRole(parentKey string, sessionPolicy *Policy, ttl time.Dur
 		AccessKey:    accessKey,
 		SecretKey:    secretKey,
 		SessionToken: token,
-		Expiration:   expiry,
+		Expiration:   rec.expiry,
 	}, nil
 }
 

@@ -5,6 +5,7 @@ package auth
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"sync"
 	"time"
@@ -35,6 +36,12 @@ var (
 	// ErrInvalid is returned when an operation is structurally not allowed, such as
 	// deleting a built-in policy.
 	ErrInvalid = errors.New("auth: invalid operation")
+	// ErrInvalidToken is returned when a federated identity token (an OIDC JWT) is
+	// malformed, fails signature verification, or carries unacceptable claims.
+	ErrInvalidToken = errors.New("auth: invalid identity token")
+	// ErrIDPCommunication is returned when liteio cannot reach or parse an identity
+	// provider's published keys.
+	ErrIDPCommunication = errors.New("auth: identity provider unreachable")
 )
 
 // User is a long-lived credential with attached policies and group memberships
@@ -69,29 +76,33 @@ type ServiceAccount struct {
 // Store is the identity authority: root, users, groups, service accounts, and the
 // named policy documents they attach. It is safe for concurrent use.
 type Store struct {
-	mu       sync.RWMutex
-	rootKey  string
-	rootSec  string
-	users    map[string]*User           // by access key
-	groups   map[string]*Group          // by name
-	svc      map[string]*ServiceAccount // by access key
-	sessions map[string]*sessionRecord  // STS sessions by access key
-	policies map[string]Policy          // by name; seeded with the canned set
-	now      func() time.Time           // clock, injectable for tests
+	mu        sync.RWMutex
+	rootKey   string
+	rootSec   string
+	users     map[string]*User                // by access key
+	groups    map[string]*Group               // by name
+	svc       map[string]*ServiceAccount      // by access key
+	sessions  map[string]*sessionRecord       // STS sessions by access key
+	policies  map[string]Policy               // by name; seeded with the canned set
+	providers map[string]*webIdentityProvider // OIDC providers by issuer
+	now       func() time.Time                // clock, injectable for tests
+	client    *http.Client                    // for fetching provider JWKS
 }
 
 // NewStore builds a store with the given root credential and the canned policies
 // preloaded by name (so readwrite, readonly, and the rest attach out of the box).
 func NewStore(rootAccessKey, rootSecretKey string) *Store {
 	s := &Store{
-		rootKey:  rootAccessKey,
-		rootSec:  rootSecretKey,
-		users:    make(map[string]*User),
-		groups:   make(map[string]*Group),
-		svc:      make(map[string]*ServiceAccount),
-		sessions: make(map[string]*sessionRecord),
-		policies: make(map[string]Policy),
-		now:      time.Now,
+		rootKey:   rootAccessKey,
+		rootSec:   rootSecretKey,
+		users:     make(map[string]*User),
+		groups:    make(map[string]*Group),
+		svc:       make(map[string]*ServiceAccount),
+		sessions:  make(map[string]*sessionRecord),
+		policies:  make(map[string]Policy),
+		providers: make(map[string]*webIdentityProvider),
+		now:       time.Now,
+		client:    http.DefaultClient,
 	}
 	for _, name := range CannedPolicyNames() {
 		p, _ := CannedPolicy(name)
@@ -414,6 +425,18 @@ func (s *Store) principalAllows(parentKey string, req Request) (allowed, ok bool
 	return false, false
 }
 
+// sessionBase reports the base decision for an STS session before its narrowing
+// policy applies. An AssumeRole session defers to the principal it was assumed from
+// (root or a user); a federated session (parent == "") has no store identity, so
+// its base is the policy set the provider's claims mapped to. The caller holds the
+// lock. ok is false only for an AssumeRole session whose parent has vanished.
+func (s *Store) sessionBase(sess *sessionRecord, req Request) (allowed, ok bool) {
+	if sess.parent == "" {
+		return Evaluate(sess.basePolicies, req), true
+	}
+	return s.principalAllows(sess.parent, req)
+}
+
 // IsAllowed decides a request for the identity behind an access key, applying the
 // right composition for each kind:
 //
@@ -456,7 +479,7 @@ func (s *Store) IsAllowed(accessKey string, req Request) (bool, error) {
 		if !s.now().Before(sess.expiry) {
 			return false, fmt.Errorf("%w: access key %q", ErrExpired, accessKey)
 		}
-		base, ok := s.principalAllows(sess.parent, req)
+		base, ok := s.sessionBase(sess, req)
 		if !ok {
 			return false, fmt.Errorf("%w: session principal %q", ErrNotFound, sess.parent)
 		}

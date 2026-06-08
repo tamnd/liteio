@@ -63,13 +63,25 @@ func (s *Store) AuthorizeS3(accessKey string, bucketPolicy *Policy, req Request)
 		if !s.now().Before(sess.expiry) {
 			return false, fmt.Errorf("%w: access key %q", ErrExpired, accessKey)
 		}
-		base, pid, ok := s.parentDecision(sess.parent, req)
+		base, pid, ok := s.sessionDecision(sess, req)
 		if !ok {
 			return false, fmt.Errorf("%w: session principal %q", ErrNotFound, sess.parent)
 		}
 		return combineGrant(base, bucketPolicy, pid, req, sess.policy), nil
 	}
 	return false, fmt.Errorf("%w: access key %q", ErrNotFound, accessKey)
+}
+
+// sessionDecision resolves the base three-valued decision for an STS session and the
+// principal it presents to a bucket policy. An AssumeRole session defers to the
+// parent it was assumed from; a federated session (parent == "") has no store
+// identity, so its base is the policy set the provider's claims mapped to and the
+// principal it presents is the token subject. The caller must hold the lock.
+func (s *Store) sessionDecision(sess *sessionRecord, req Request) (Decision, PrincipalID, bool) {
+	if sess.parent == "" {
+		return decide(sess.basePolicies, req), PrincipalID(sess.subject), true
+	}
+	return s.parentDecision(sess.parent, req)
 }
 
 // parentDecision resolves the three-valued decision of the identity named by a
