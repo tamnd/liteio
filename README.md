@@ -190,6 +190,7 @@ the living source of truth and is updated as milestones land.
 | Session-token binding (X-Amz-Security-Token validated per request, expiry enforced) | implemented (M4) |
 | Free web console (embedded SPA, server-side sessions, signed in-process admin bridge) | in progress (M5) |
 | Server runs on the full IAM store: front-door authorization, STS, session validation, admin + console listener | implemented (M5) |
+| Admin info/health API + console cluster dashboard (topology, drive reachability, per-set quorum/availability) | implemented (M5) |
 | Lifecycle / encryption / object lock | planned (M6) |
 | Replication / tiering / events | planned (M7) |
 | Rebalance / decommission | planned (M8) |

@@ -11,7 +11,12 @@ import (
 	"github.com/tamnd/liteio/admin"
 	"github.com/tamnd/liteio/auth"
 	"github.com/tamnd/liteio/console"
+	"github.com/tamnd/liteio/object"
 )
+
+// version is the build version reported by the admin info endpoint and the console
+// dashboard. It is overridden at build time with -ldflags "-X main.version=...".
+var version = "dev"
 
 // buildConsole assembles the listener that serves both the admin REST API and the
 // web console over one identity store. The admin API answers SigV4-signed calls at
@@ -19,8 +24,15 @@ import (
 // serves the browser app at every other path and signs its own calls into the very
 // same admin handler in-process, so the browser never holds a secret key. The
 // returned *console.Server is the seam the caller sweeps expired sessions on.
-func buildConsole(cfg config, store *auth.Store) (http.Handler, *console.Server, error) {
-	adminSrv := admin.NewServer(store, store)
+func buildConsole(cfg config, store *auth.Store, layer object.ObjectLayer) (http.Handler, *console.Server, error) {
+	adminOpts := []admin.Option{admin.WithVersion(version)}
+	// The object layer reports topology and drive health for the info endpoints; a
+	// layer that does not satisfy InfoSource (none does today besides ServerPools)
+	// simply leaves those routes unregistered.
+	if src, ok := layer.(admin.InfoSource); ok {
+		adminOpts = append(adminOpts, admin.WithInfo(src))
+	}
+	adminSrv := admin.NewServer(store, store, adminOpts...)
 
 	opts := []console.Option{}
 	if cfg.consoleRegion != "" {
