@@ -32,6 +32,9 @@ var (
 	ErrUnknownPolicy = errors.New("auth: unknown policy")
 	// ErrExpired is returned when an STS session credential has passed its TTL.
 	ErrExpired = errors.New("auth: session expired")
+	// ErrInvalid is returned when an operation is structurally not allowed, such as
+	// deleting a built-in policy.
+	ErrInvalid = errors.New("auth: invalid operation")
 )
 
 // User is a long-lived credential with attached policies and group memberships

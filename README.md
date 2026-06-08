@@ -176,7 +176,8 @@ the living source of truth and is updated as milestones land.
 | IAM condition keys (string/bool/IP/numeric/date, Not + IfExists variants) | implemented (M4) |
 | Bucket-policy persistence + ?policy GET/PUT/DELETE endpoint | implemented (M4) |
 | Front-door authorization (per-request action/ARN/condition mapping, identity + bucket-policy combine) | implemented (M4) |
-| OIDC/LDAP federation / STS endpoint / admin API | planned (M4) |
+| Signed admin REST API (IAM CRUD over HTTP, SigV4-authenticated, action-gated) | implemented (M4) |
+| OIDC/LDAP federation / STS endpoint | planned (M4) |
 | Free web console | planned (M5) |
 | Lifecycle / encryption / object lock | planned (M6) |
 | Replication / tiering / events | planned (M7) |
