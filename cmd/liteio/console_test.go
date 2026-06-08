@@ -287,6 +287,73 @@ func TestBuildConsoleS3BridgeAbsentWithoutHandler(t *testing.T) {
 	}
 }
 
+// TestBuildConsoleIdentityManagement drives the IAM screens' admin-bridge flow the
+// SPA depends on: create a custom policy, create a user carrying it, list users,
+// attach a second policy and detach it, read the user back, then delete the user.
+func TestBuildConsoleIdentityManagement(t *testing.T) {
+	store := auth.NewStore("liteioadmin", "liteioadmin")
+	handler, _, err := buildConsole(rootCfg(), store, nil, nil)
+	if err != nil {
+		t.Fatalf("buildConsole: %v", err)
+	}
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	login := mustJSON(t, map[string]string{"accessKey": "liteioadmin", "secretKey": "liteioadmin"})
+	if s := post(t, client, srv.URL+"/api/login", login); s != http.StatusOK {
+		t.Fatalf("login status = %d", s)
+	}
+
+	// Create a custom policy.
+	policyDoc := mustJSON(t, map[string]any{
+		"Version": "2012-10-17",
+		"Statement": []map[string]any{
+			{"Effect": "Allow", "Action": []string{"s3:GetObject"}, "Resource": []string{"arn:aws:s3:::*"}},
+		},
+	})
+	if s := putJSON(t, client, srv.URL+"/api/admin/policies/reader", policyDoc); s != http.StatusNoContent {
+		t.Fatalf("create policy status = %d, want 204", s)
+	}
+
+	// Create a user carrying that policy.
+	userBody := mustJSON(t, map[string]any{"secretKey": "devsecret123", "policies": []string{"reader"}})
+	if s := putJSON(t, client, srv.URL+"/api/admin/users/dev", userBody); s != http.StatusNoContent {
+		t.Fatalf("create user status = %d, want 204", s)
+	}
+
+	// Attach a second (canned) policy, then detach it.
+	attach := srv.URL + "/api/admin/users/dev/policies/readwrite"
+	if s := sendJSON(t, client, http.MethodPut, attach, nil); s != http.StatusNoContent {
+		t.Fatalf("attach policy status = %d, want 204", s)
+	}
+	if s := sendJSON(t, client, http.MethodDelete, attach, nil); s != http.StatusNoContent {
+		t.Fatalf("detach policy status = %d, want 204", s)
+	}
+
+	// Read the user back and confirm it carries exactly the custom policy.
+	body, status := getBody(t, client, srv.URL+"/api/admin/users/dev", csrfHeaders())
+	if status != http.StatusOK {
+		t.Fatalf("get user status = %d; body %q", status, body)
+	}
+	var u struct {
+		AccessKey string   `json:"accessKey"`
+		Policies  []string `json:"policies"`
+	}
+	if err := json.Unmarshal([]byte(body), &u); err != nil {
+		t.Fatalf("decode user: %v (%q)", err, body)
+	}
+	if u.AccessKey != "dev" || len(u.Policies) != 1 || u.Policies[0] != "reader" {
+		t.Errorf("user = %+v, want dev with [reader]", u)
+	}
+
+	// Delete the user.
+	if s := sendJSON(t, client, http.MethodDelete, srv.URL+"/api/admin/users/dev", nil); s != http.StatusNoContent {
+		t.Fatalf("delete user status = %d, want 204", s)
+	}
+}
+
 // newDriveLayer builds a single-set object layer over n local drives in temp dirs.
 func newDriveLayer(t *testing.T, n, parity int) object.ObjectLayer {
 	t.Helper()
