@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/tamnd/liteio/object"
+	"github.com/tamnd/liteio/ssec"
 )
 
 // Copy-related request headers.
@@ -53,7 +54,19 @@ func (s *Server) copyObject(w http.ResponseWriter, r *http.Request, requestID, d
 		return
 	}
 
-	srcInfo, err := s.layer.GetObjectInfo(r.Context(), srcBucket, srcObject, object.ObjectOptions{VersionID: srcVersion})
+	// Parse SSE-C keys. The copy-source key decrypts the source object; the regular
+	// x-amz-server-side-encryption-customer-* key encrypts the destination.
+	srcGetOpts := object.ObjectOptions{VersionID: srcVersion}
+	srcKey, srcPresent, srcErr := ssec.ParseCopySourceKey(r)
+	if srcErr != nil {
+		writeError(w, requestID, r.URL.Path, errSSECBadRequest)
+		return
+	}
+	if srcPresent {
+		srcGetOpts.SSECKey = &srcKey
+	}
+
+	srcInfo, err := s.layer.GetObjectInfo(r.Context(), srcBucket, srcObject, srcGetOpts)
 	if err != nil {
 		s.fail(w, requestID, r.URL.Path, err)
 		return
@@ -67,7 +80,10 @@ func (s *Server) copyObject(w http.ResponseWriter, r *http.Request, requestID, d
 		return
 	}
 
-	opts := object.ObjectOptions{}
+	opts := object.ObjectOptions{SrcSSECKey: srcGetOpts.SSECKey}
+	if !parseSSECKey(w, r, requestID, &opts) {
+		return
+	}
 	if replace {
 		opts.ContentType = r.Header.Get("Content-Type")
 		opts.UserDefined = userMetaFromHeader(r)
@@ -109,7 +125,17 @@ func (s *Server) uploadPartCopy(w http.ResponseWriter, r *http.Request, requestI
 		return
 	}
 
-	srcInfo, err := s.layer.GetObjectInfo(r.Context(), srcBucket, srcObject, object.ObjectOptions{VersionID: srcVersion})
+	partSrcGetOpts := object.ObjectOptions{VersionID: srcVersion}
+	partSrcKey, partSrcPresent, partSrcErr := ssec.ParseCopySourceKey(r)
+	if partSrcErr != nil {
+		writeError(w, requestID, r.URL.Path, errSSECBadRequest)
+		return
+	}
+	if partSrcPresent {
+		partSrcGetOpts.SSECKey = &partSrcKey
+	}
+
+	srcInfo, err := s.layer.GetObjectInfo(r.Context(), srcBucket, srcObject, partSrcGetOpts)
 	if err != nil {
 		s.fail(w, requestID, r.URL.Path, err)
 		return
@@ -124,7 +150,8 @@ func (s *Server) uploadPartCopy(w http.ResponseWriter, r *http.Request, requestI
 		}
 	}
 
-	part, err := s.layer.CopyObjectPart(r.Context(), srcBucket, srcObject, dstBucket, dstObject, uploadID, partNumber, srcInfo, rng, object.ObjectOptions{})
+	copyPartOpts := object.ObjectOptions{SrcSSECKey: partSrcGetOpts.SSECKey}
+	part, err := s.layer.CopyObjectPart(r.Context(), srcBucket, srcObject, dstBucket, dstObject, uploadID, partNumber, srcInfo, rng, copyPartOpts)
 	if err != nil {
 		s.fail(w, requestID, r.URL.Path, err)
 		return

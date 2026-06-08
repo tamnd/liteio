@@ -53,6 +53,15 @@ type ObjectOptions struct {
 	ContentType string
 	// Range, when set, limits a GetObject to a byte range of the object.
 	Range *HTTPRangeSpec
+	// SSECKey, when non-nil, is the 32-byte AES-256 customer key for SSE-C
+	// (server-side encryption with customer-provided keys). On a write it triggers
+	// AES-256-CTR encryption; on a read it decrypts and validates the key against
+	// the MD5 stored at write time.
+	SSECKey *[32]byte
+	// SrcSSECKey, when non-nil, is the customer key for the copy source object in a
+	// CopyObject or CopyObjectPart operation. It is used only for reading; the
+	// destination is controlled by SSECKey.
+	SrcSSECKey *[32]byte
 }
 
 // HTTPRangeSpec is a parsed HTTP Range request over a single object. It models

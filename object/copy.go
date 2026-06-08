@@ -20,18 +20,20 @@ import (
 // correctness comes first. Destination metadata is whatever the front door places
 // in opts — the COPY-vs-REPLACE directive is resolved there.
 func (sp *ServerPools) CopyObject(ctx context.Context, srcBucket, srcObject, dstBucket, dstObject string, srcInfo ObjectInfo, opts ObjectOptions) (ObjectInfo, error) {
-	data, err := sp.readWholeObject(ctx, srcBucket, srcObject, srcInfo.VersionID)
+	data, err := sp.readWholeObject(ctx, srcBucket, srcObject, srcInfo.VersionID, opts.SrcSSECKey)
 	if err != nil {
 		return ObjectInfo{}, err
 	}
-	return sp.PutObject(ctx, dstBucket, dstObject, NewPutReader(bytes.NewReader(data), int64(len(data))), opts)
+	putOpts := opts
+	putOpts.SrcSSECKey = nil // src key does not apply to the destination
+	return sp.PutObject(ctx, dstBucket, dstObject, NewPutReader(bytes.NewReader(data), int64(len(data))), putOpts)
 }
 
 // CopyObjectPart implements ObjectLayer: it reads a source object (optionally a
 // byte range of it) and writes those bytes as part partID of an existing
 // multipart upload on the destination key.
-func (sp *ServerPools) CopyObjectPart(ctx context.Context, srcBucket, srcObject, dstBucket, dstObject, uploadID string, partID int, srcInfo ObjectInfo, rng *HTTPRangeSpec, _ ObjectOptions) (PartInfo, error) {
-	gr, err := sp.GetObject(ctx, srcBucket, srcObject, ObjectOptions{VersionID: srcInfo.VersionID, Range: rng})
+func (sp *ServerPools) CopyObjectPart(ctx context.Context, srcBucket, srcObject, dstBucket, dstObject, uploadID string, partID int, srcInfo ObjectInfo, rng *HTTPRangeSpec, opts ObjectOptions) (PartInfo, error) {
+	gr, err := sp.GetObject(ctx, srcBucket, srcObject, ObjectOptions{VersionID: srcInfo.VersionID, Range: rng, SSECKey: opts.SrcSSECKey})
 	if err != nil {
 		return PartInfo{}, err
 	}
@@ -43,9 +45,10 @@ func (sp *ServerPools) CopyObjectPart(ctx context.Context, srcBucket, srcObject,
 	return sp.PutObjectPart(ctx, dstBucket, dstObject, uploadID, partID, NewPutReader(bytes.NewReader(data), int64(len(data))), ObjectOptions{})
 }
 
-// readWholeObject reads an entire object version into memory.
-func (sp *ServerPools) readWholeObject(ctx context.Context, bucket, object, versionID string) ([]byte, error) {
-	gr, err := sp.GetObject(ctx, bucket, object, ObjectOptions{VersionID: versionID})
+// readWholeObject reads an entire object version into memory. key, when non-nil,
+// is the SSE-C customer key for decryption.
+func (sp *ServerPools) readWholeObject(ctx context.Context, bucket, object, versionID string, key *[32]byte) ([]byte, error) {
+	gr, err := sp.GetObject(ctx, bucket, object, ObjectOptions{VersionID: versionID, SSECKey: key})
 	if err != nil {
 		return nil, err
 	}
