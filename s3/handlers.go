@@ -501,5 +501,16 @@ func userMetaFromHeader(r *http.Request) map[string]string {
 	if tag := r.Header.Get("x-amz-tagging"); tag != "" {
 		m["x-amz-tagging"] = tag
 	}
+	// Object Lock per-object headers: captured verbatim so the object layer can
+	// apply them without the S3 layer needing to know the retention semantics.
+	for _, k := range []string{
+		"x-amz-object-lock-mode",
+		"x-amz-object-lock-retain-until-date",
+		"x-amz-object-lock-legal-hold",
+	} {
+		if v := r.Header.Get(k); v != "" {
+			m[k] = v
+		}
+	}
 	return m
 }

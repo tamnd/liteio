@@ -295,3 +295,35 @@ type copyPartResult struct {
 	LastModified string   `xml:"LastModified"`
 	ETag         string   `xml:"ETag"`
 }
+
+// --- Object Lock XML types (GET/PUT /bucket?object-lock, /bucket/key?retention, /bucket/key?legal-hold) ---
+
+type objectLockConfigurationXML struct {
+	XMLName           xml.Name           `xml:"ObjectLockConfiguration"`
+	XMLNS             string             `xml:"xmlns,attr,omitempty"`
+	ObjectLockEnabled string             `xml:"ObjectLockEnabled"`
+	Rule              *objectLockRuleXML `xml:"Rule,omitempty"`
+}
+
+type objectLockRuleXML struct {
+	DefaultRetention defaultRetentionXML `xml:"DefaultRetention"`
+}
+
+type defaultRetentionXML struct {
+	Mode  string `xml:"Mode"`
+	Days  int    `xml:"Days,omitempty"`
+	Years int    `xml:"Years,omitempty"`
+}
+
+type retentionXML struct {
+	XMLName         xml.Name `xml:"Retention"`
+	XMLNS           string   `xml:"xmlns,attr,omitempty"`
+	Mode            string   `xml:"Mode"`
+	RetainUntilDate string   `xml:"RetainUntilDate"`
+}
+
+type legalHoldXML struct {
+	XMLName xml.Name `xml:"LegalHold"`
+	XMLNS   string   `xml:"xmlns,attr,omitempty"`
+	Status  string   `xml:"Status"`
+}

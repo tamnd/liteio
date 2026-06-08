@@ -213,6 +213,8 @@ func (s *Server) serveBucket(w http.ResponseWriter, r *http.Request, requestID, 
 			s.getBucketTagging(w, r, requestID, bucket)
 		case q.Has("lifecycle"):
 			s.getBucketLifecycleConfiguration(w, r, requestID, bucket)
+		case q.Has("object-lock"):
+			s.getObjectLockConfiguration(w, r, requestID, bucket)
 		case q.Has("versions"):
 			s.listObjectVersions(w, r, requestID, bucket)
 		case q.Has("uploads"):
@@ -230,6 +232,8 @@ func (s *Server) serveBucket(w http.ResponseWriter, r *http.Request, requestID, 
 			s.putBucketTagging(w, r, requestID, bucket)
 		case q.Has("lifecycle"):
 			s.putBucketLifecycleConfiguration(w, r, requestID, bucket)
+		case q.Has("object-lock"):
+			s.putObjectLockConfiguration(w, r, requestID, bucket)
 		default:
 			s.createBucket(w, r, requestID, bucket)
 		}
@@ -283,6 +287,14 @@ func (s *Server) serveObject(w http.ResponseWriter, r *http.Request, requestID, 
 			s.putObjectTagging(w, r, requestID, bucket, object)
 			return
 		}
+		if q.Has("retention") {
+			s.putObjectRetention(w, r, requestID, bucket, object)
+			return
+		}
+		if q.Has("legal-hold") {
+			s.putObjectLegalHold(w, r, requestID, bucket, object)
+			return
+		}
 		s.putObject(w, r, requestID, bucket, object)
 	case http.MethodGet:
 		if uploadID != "" {
@@ -291,6 +303,14 @@ func (s *Server) serveObject(w http.ResponseWriter, r *http.Request, requestID, 
 		}
 		if q.Has("tagging") {
 			s.getObjectTagging(w, r, requestID, bucket, object)
+			return
+		}
+		if q.Has("retention") {
+			s.getObjectRetention(w, r, requestID, bucket, object)
+			return
+		}
+		if q.Has("legal-hold") {
+			s.getObjectLegalHold(w, r, requestID, bucket, object)
 			return
 		}
 		s.getObject(w, r, requestID, bucket, object)

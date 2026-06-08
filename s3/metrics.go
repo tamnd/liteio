@@ -147,6 +147,8 @@ func bucketOperation(r *http.Request, q url.Values) string {
 			return "GetBucketTagging"
 		case q.Has("lifecycle"):
 			return "GetBucketLifecycleConfiguration"
+		case q.Has("object-lock"):
+			return "GetObjectLockConfiguration"
 		case q.Has("versions"):
 			return "ListObjectVersions"
 		case q.Has("uploads"):
@@ -164,6 +166,8 @@ func bucketOperation(r *http.Request, q url.Values) string {
 			return "PutBucketTagging"
 		case q.Has("lifecycle"):
 			return "PutBucketLifecycleConfiguration"
+		case q.Has("object-lock"):
+			return "PutObjectLockConfiguration"
 		default:
 			return "CreateBucket"
 		}
@@ -202,6 +206,10 @@ func objectOperation(r *http.Request, q url.Values) string {
 			return "CopyObject"
 		case q.Has("tagging"):
 			return "PutObjectTagging"
+		case q.Has("retention"):
+			return "PutObjectRetention"
+		case q.Has("legal-hold"):
+			return "PutObjectLegalHold"
 		default:
 			return "PutObject"
 		}
@@ -211,6 +219,12 @@ func objectOperation(r *http.Request, q url.Values) string {
 		}
 		if q.Has("tagging") {
 			return "GetObjectTagging"
+		}
+		if q.Has("retention") {
+			return "GetObjectRetention"
+		}
+		if q.Has("legal-hold") {
+			return "GetObjectLegalHold"
 		}
 		return "GetObject"
 	case http.MethodHead:

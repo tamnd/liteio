@@ -62,6 +62,11 @@ var (
 	errNoSuchBucketPolicy           = APIError{"NoSuchBucketPolicy", "The bucket policy does not exist.", http.StatusNotFound}
 	errNoSuchTagSet                 = APIError{"NoSuchTagSet", "The TagSet does not exist.", http.StatusNotFound}
 	errNoSuchLifecycleConfiguration = APIError{"NoSuchLifecycleConfiguration", "The lifecycle configuration does not exist.", http.StatusNotFound}
+	errObjectLocked                 = APIError{"ObjectLocked", "Object is protected by Object Lock and cannot be deleted or modified.", http.StatusConflict}
+	errObjectLockRequiresVersioning = APIError{"InvalidRequest", "Object Lock requires versioning to be enabled on the bucket.", http.StatusBadRequest}
+	errNoSuchObjectLockConfig       = APIError{"ObjectLockConfigurationNotFoundError", "Object Lock configuration does not exist for this bucket.", http.StatusNotFound}
+	errComplianceCannotShorten      = APIError{"InvalidRequest", "Object Lock governance compliance retention date cannot be shortened.", http.StatusBadRequest}
+	errNoSuchObjectRetention        = APIError{"NoSuchObjectLockConfiguration", "The specified object does not have a ObjectLock configuration.", http.StatusNotFound}
 	errSSECKeyRequired              = APIError{"InvalidRequest", "The object was stored using a form of Server Side Encryption. The correct parameters must be provided to retrieve the object.", http.StatusBadRequest}
 	errSSECKeyMismatch              = APIError{"AccessDenied", "The provided encryption key does not match the encryption key that was used to encrypt the object.", http.StatusForbidden}
 	errSSECOnUnencrypted            = APIError{"InvalidRequest", "The object was not stored using a customer encryption key.", http.StatusBadRequest}
@@ -109,6 +114,16 @@ func toAPIError(err error) APIError {
 		return errBadTagging
 	case errors.Is(err, object.ErrNoSuchBucketLifecycle):
 		return errNoSuchLifecycleConfiguration
+	case errors.Is(err, object.ErrObjectLocked):
+		return errObjectLocked
+	case errors.Is(err, object.ErrObjectLockRequiresVersioning):
+		return errObjectLockRequiresVersioning
+	case errors.Is(err, object.ErrNoSuchObjectLockConfiguration):
+		return errNoSuchObjectLockConfig
+	case errors.Is(err, object.ErrComplianceRetentionCannotShorten):
+		return errComplianceCannotShorten
+	case errors.Is(err, object.ErrNoSuchObjectRetention):
+		return errNoSuchObjectRetention
 	case errors.Is(err, object.ErrSSECKeyRequired):
 		return errSSECKeyRequired
 	case errors.Is(err, object.ErrSSECKeyMismatch):
