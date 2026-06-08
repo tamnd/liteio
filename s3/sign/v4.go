@@ -26,6 +26,7 @@ import (
 const (
 	algorithm    = "AWS4-HMAC-SHA256"
 	serviceS3    = "s3"
+	serviceSTS   = "sts"
 	terminator   = "aws4_request"
 	iso8601      = "20060102T150405Z"
 	yyyymmdd     = "20060102"
@@ -107,6 +108,16 @@ func (c credentialScope) scopeString() string {
 	return c.date + "/" + c.region + "/" + c.service + "/" + terminator
 }
 
+// allowedService reports whether a credential scope's service name is one liteio
+// serves. liteio runs its S3 API and its STS (doc 08.4) on the same endpoint
+// rather than on separate hosts, so it accepts both the "s3" and "sts" service
+// names; the signature still has to match the secret, and the region is already
+// lax (see Verify), so this only relaxes the cosmetic service segment of the
+// credential scope.
+func allowedService(service string) bool {
+	return service == serviceS3 || service == serviceSTS
+}
+
 // Verify authenticates an inbound request against the credential store. On
 // success it returns the access key whose secret signed the request. It picks the
 // presigned path when the query carries X-Amz-Signature, otherwise the header
@@ -131,7 +142,7 @@ func verifyHeader(r *http.Request, store auth.CredentialStore, now time.Time) (*
 	if err != nil {
 		return nil, err
 	}
-	if scope.service != serviceS3 {
+	if !allowedService(scope.service) {
 		return nil, errBadAlgo
 	}
 
@@ -185,7 +196,7 @@ func verifyPresigned(r *http.Request, store auth.CredentialStore, now time.Time)
 	if perr != nil {
 		return nil, perr
 	}
-	if scope.service != serviceS3 {
+	if !allowedService(scope.service) {
 		return nil, errBadAlgo
 	}
 	t, terr := time.Parse(iso8601, q.Get("X-Amz-Date"))

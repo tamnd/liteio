@@ -30,6 +30,7 @@ type Server struct {
 	layer  object.ObjectLayer
 	creds  auth.CredentialStore
 	authz  Authorizer       // policy decision (nil authenticates only)
+	sts    STSIssuer        // temporary-credential issuer (nil disables the STS endpoint)
 	domain string           // virtual-host base domain ("" disables vhost)
 	now    func() time.Time // clock seam for signature skew (tests inject)
 }
@@ -82,6 +83,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res := s.parseResource(r)
+	// The STS endpoint (doc 08.4) lives at the service root as a POST form. It
+	// predates the S3 action gate — issuing a credential is not an S3 operation, and
+	// AssumeRole authorizes intrinsically (only root or a user may assume).
+	if res.bucket == "" && r.Method == http.MethodPost {
+		s.serveSTS(w, r, requestID, vr)
+		return
+	}
 	if aerr := s.authorize(r, vr, res); aerr.Code != "" {
 		writeError(w, requestID, r.URL.Path, aerr)
 		return

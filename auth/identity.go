@@ -340,6 +340,21 @@ func (s *Store) policiesKnown(names []string) error {
 	return nil
 }
 
+// The identity store is the production credential store behind the SigV4 verifier.
+var _ CredentialStore = (*Store)(nil)
+
+// Get implements CredentialStore so the SigV4 verifier can sign-check every kind
+// of identity the store knows — root, users, service accounts, and STS sessions —
+// from one authority. It is the bridge that lets a credential minted by AssumeRole
+// (doc 08.4) immediately sign requests: Secret already resolves session keys.
+func (s *Store) Get(accessKey string) (Credentials, bool) {
+	secret, ok := s.Secret(accessKey)
+	if !ok {
+		return Credentials{}, false
+	}
+	return Credentials{AccessKey: accessKey, SecretKey: secret}, true
+}
+
 // Secret returns the secret key for an access key (root, user, or service
 // account) for signature verification, and whether the key exists.
 func (s *Store) Secret(accessKey string) (string, bool) {
