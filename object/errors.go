@@ -83,4 +83,13 @@ var (
 	// ErrNoSuchBucketEncryption is returned by GetBucketEncryption when the
 	// bucket has no default encryption configuration set.
 	ErrNoSuchBucketEncryption = errors.New("object: no such bucket encryption configuration")
+	// ErrNoSuchBucketQuota is returned by GetBucketQuota when the bucket has no
+	// quota configuration set.
+	ErrNoSuchBucketQuota = errors.New("object: no such bucket quota configuration")
+	// ErrBucketQuotaExceeded is returned when a write would push a bucket past its
+	// configured hard size or object-count limit.
+	ErrBucketQuotaExceeded = errors.New("object: bucket quota exceeded")
+	// ErrBucketSoftQuotaExceeded is returned (non-blocking) when a write crosses a
+	// soft limit. The write proceeds; callers should record a warning metric.
+	ErrBucketSoftQuotaExceeded = errors.New("object: bucket soft quota exceeded")
 )

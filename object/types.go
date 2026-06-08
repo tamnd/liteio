@@ -323,6 +323,11 @@ type ObjectLayer interface {
 	GetBucketEncryption(ctx context.Context, bucket string) (BucketEncryptionConfig, error)
 	DeleteBucketEncryption(ctx context.Context, bucket string) error
 
+	// bucket quotas: hard/soft limits by size and object count
+	SetBucketQuota(ctx context.Context, bucket string, q BucketQuota) error
+	GetBucketQuota(ctx context.Context, bucket string) (BucketQuota, error)
+	DeleteBucketQuota(ctx context.Context, bucket string) error
+
 	// object lock: bucket-level configuration and per-version retention / legal hold
 	SetObjectLockConfiguration(ctx context.Context, bucket string, cfg ObjectLockConfig) error
 	GetObjectLockConfiguration(ctx context.Context, bucket string) (ObjectLockConfig, error)
