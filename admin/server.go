@@ -72,6 +72,8 @@ var _ IAM = (*auth.Store)(nil)
 type Server struct {
 	iam     IAM
 	creds   auth.CredentialStore // SigV4 secret lookup
+	info    InfoSource           // deployment topology for info/health (nil omits those routes)
+	version string               // build version reported by the info endpoint
 	now     func() time.Time     // clock seam for signature skew (tests inject)
 	mux     *http.ServeMux
 	actions map[string]string // ServeMux pattern -> required admin action
@@ -83,10 +85,18 @@ type Option func(*Server)
 // WithClock overrides the clock used for signature skew checks (for tests).
 func WithClock(now func() time.Time) Option { return func(s *Server) { s.now = now } }
 
+// WithInfo wires the deployment topology source the info and health endpoints
+// report (doc 10.2). Without it those routes are not registered, so a node with no
+// object layer (a pure IAM control node) simply does not serve them.
+func WithInfo(src InfoSource) Option { return func(s *Server) { s.info = src } }
+
+// WithVersion sets the build version string the info endpoint reports.
+func WithVersion(v string) Option { return func(s *Server) { s.version = v } }
+
 // NewServer builds the admin API over an IAM store and the credential store the
 // signature verifier looks secrets up in.
 func NewServer(iam IAM, creds auth.CredentialStore, opts ...Option) *Server {
-	s := &Server{iam: iam, creds: creds, now: time.Now}
+	s := &Server{iam: iam, creds: creds, version: "dev", now: time.Now}
 	for _, o := range opts {
 		o(s)
 	}
@@ -128,6 +138,14 @@ func (s *Server) routes() *http.ServeMux {
 		{"GET " + apiPrefix + "/service-accounts", "admin:ListServiceAccounts", s.listServiceAccounts},
 		{"PUT " + apiPrefix + "/service-accounts", "admin:CreateServiceAccount", s.putServiceAccount},
 		{"DELETE " + apiPrefix + "/service-accounts/{key}", "admin:RemoveServiceAccount", s.deleteServiceAccount},
+	}
+	// Info and health report on the object layer; register them only when a topology
+	// source is wired, so a control node without one does not advertise empty routes.
+	if s.info != nil {
+		rs = append(rs,
+			route{"GET " + apiPrefix + "/info", "admin:ServerInfo", s.serverInfo},
+			route{"GET " + apiPrefix + "/health", "admin:HealthInfo", s.health},
+		)
 	}
 	mux := http.NewServeMux()
 	s.actions = make(map[string]string, len(rs))

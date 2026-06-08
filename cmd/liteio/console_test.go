@@ -15,6 +15,9 @@ import (
 	"testing"
 
 	"github.com/tamnd/liteio/auth"
+	"github.com/tamnd/liteio/object"
+	"github.com/tamnd/liteio/storage"
+	"github.com/tamnd/liteio/storage/local"
 )
 
 // rootCfg is a config with the default root credential and the console wired for
@@ -57,7 +60,7 @@ func TestParseFlagsConsoleDisabled(t *testing.T) {
 // the console app, rather than letting the console SPA fallback swallow admin URLs.
 func TestBuildConsoleComposition(t *testing.T) {
 	store := auth.NewStore("liteioadmin", "liteioadmin")
-	handler, csrv, err := buildConsole(rootCfg(), store)
+	handler, csrv, err := buildConsole(rootCfg(), store, nil)
 	if err != nil {
 		t.Fatalf("buildConsole: %v", err)
 	}
@@ -95,7 +98,7 @@ func TestBuildConsoleComposition(t *testing.T) {
 // into the admin API, confirming the wiring carries a request end to end.
 func TestBuildConsoleLoginAndBridge(t *testing.T) {
 	store := auth.NewStore("liteioadmin", "liteioadmin")
-	handler, _, err := buildConsole(rootCfg(), store)
+	handler, _, err := buildConsole(rootCfg(), store, nil)
 	if err != nil {
 		t.Fatalf("buildConsole: %v", err)
 	}
@@ -133,11 +136,66 @@ func TestBuildConsoleLoginAndBridge(t *testing.T) {
 	}
 }
 
+// TestBuildConsoleInfoThroughBridge confirms the admin info endpoint is wired when a
+// real object layer is passed, and that it is reachable through the console bridge:
+// the dashboard's landing call returns the live topology.
+func TestBuildConsoleInfoThroughBridge(t *testing.T) {
+	store := auth.NewStore("liteioadmin", "liteioadmin")
+	layer := newDriveLayer(t, 4, 2)
+	handler, _, err := buildConsole(rootCfg(), store, layer)
+	if err != nil {
+		t.Fatalf("buildConsole: %v", err)
+	}
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	login := mustJSON(t, map[string]string{"accessKey": "liteioadmin", "secretKey": "liteioadmin"})
+	if s := post(t, client, srv.URL+"/api/login", login); s != http.StatusOK {
+		t.Fatalf("login status = %d", s)
+	}
+
+	body, status := getBody(t, client, srv.URL+"/api/admin/info", csrfHeaders())
+	if status != http.StatusOK {
+		t.Fatalf("info via bridge status = %d, want 200; body %q", status, body)
+	}
+	var info struct {
+		DriveCount   int `json:"driveCount"`
+		OnlineDrives int `json:"onlineDriveCount"`
+		SetCount     int `json:"setCount"`
+	}
+	if err := json.Unmarshal([]byte(body), &info); err != nil {
+		t.Fatalf("decode info: %v (%q)", err, body)
+	}
+	if info.DriveCount != 4 || info.OnlineDrives != 4 || info.SetCount != 1 {
+		t.Errorf("info = %+v, want 4 drives all online in 1 set", info)
+	}
+}
+
+// newDriveLayer builds a single-set object layer over n local drives in temp dirs.
+func newDriveLayer(t *testing.T, n, parity int) object.ObjectLayer {
+	t.Helper()
+	drives := make([]storage.StorageAPI, n)
+	for i := range n {
+		d, err := local.New(t.TempDir())
+		if err != nil {
+			t.Fatalf("local.New: %v", err)
+		}
+		drives[i] = d
+	}
+	layer, err := object.NewSingleSet(deploymentSalt("test"), drives, parity)
+	if err != nil {
+		t.Fatalf("NewSingleSet: %v", err)
+	}
+	return layer
+}
+
 func TestBuildConsoleNeedsAddressToServe(t *testing.T) {
 	// buildConsole itself always builds; the address gate lives in run(). A blank
 	// region and default opts must still produce a working server.
 	store := auth.NewStore("k", "s")
-	if _, _, err := buildConsole(config{}, store); err != nil {
+	if _, _, err := buildConsole(config{}, store, nil); err != nil {
 		t.Fatalf("buildConsole with zero config: %v", err)
 	}
 }
@@ -146,7 +204,7 @@ func TestBuildConsoleNeedsAddressToServe(t *testing.T) {
 // cancelled and does not panic on a freshly built console server.
 func TestStartSweepingStops(t *testing.T) {
 	store := auth.NewStore("k", "s")
-	_, csrv, err := buildConsole(rootCfg(), store)
+	_, csrv, err := buildConsole(rootCfg(), store, nil)
 	if err != nil {
 		t.Fatalf("buildConsole: %v", err)
 	}
@@ -161,7 +219,7 @@ func TestStartSweepingStops(t *testing.T) {
 // pays for every view that reads from the admin API.
 func BenchmarkConsoleBridgeList(b *testing.B) {
 	store := auth.NewStore("liteioadmin", "liteioadmin")
-	handler, _, err := buildConsole(rootCfg(), store)
+	handler, _, err := buildConsole(rootCfg(), store, nil)
 	if err != nil {
 		b.Fatalf("buildConsole: %v", err)
 	}

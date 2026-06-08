@@ -38,3 +38,14 @@ button.link { background: none; color: var(--accent); padding: 0; margin: 0; }
 .error { color: #c0392b; margin-top: 0.75rem; min-height: 1.2em; }
 .topbar { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 0.75rem; }
 .muted { color: #777; }
+h2 { font-size: 1.1rem; margin: 1.5rem 0 0.75rem; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.75rem; margin: 0; }
+.grid dt { font-size: 0.8rem; color: #777; }
+.grid dd { margin: 0.15rem 0 0; font-size: 1.05rem; font-weight: 600; }
+table.sets { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+table.sets th, table.sets td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); }
+table.sets th { color: #777; font-weight: 600; }
+.status-healthy { color: #1e8e3e; }
+.status-degraded { color: #d98e00; }
+.status-unavailable { color: #c0392b; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; }
