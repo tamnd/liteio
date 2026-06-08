@@ -54,6 +54,11 @@ type Statement struct {
 	NotResources stringSet       `json:"NotResource,omitempty"`
 	Principal    json.RawMessage `json:"Principal,omitempty"`
 	Condition    json.RawMessage `json:"Condition,omitempty"`
+
+	// parsedPrincipal holds the Principal clause decoded into a matchable form.
+	// It is set by ParseBucketPolicy (identity policies leave it nil and never
+	// consult it); being unexported, json ignores it.
+	parsedPrincipal *principal
 }
 
 // stringSet is a JSON field that AWS allows as either a single string or an array
