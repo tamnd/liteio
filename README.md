@@ -118,6 +118,12 @@ console keeps the secret key server-side and signs admin calls in-process, so th
 browser never holds it. Behind plain HTTP for local testing, add
 `--console-insecure-cookie`; in production the console must sit behind TLS.
 
+Set `--metrics-token` (or `LITEIO_METRICS_TOKEN`) to expose Prometheus metrics at
+`/metrics` on the console port. A scraper presents the token as a bearer
+credential; with no token configured the endpoint is not served at all. The
+metrics cover per-API request counts, errors by S3 code, request latency
+histograms, in-flight requests, and bytes in and out.
+
 ### Running a distributed node
 
 Set `--cluster-address` to run a node in distributed mode. Each node serves the
@@ -196,6 +202,7 @@ the living source of truth and is updated as milestones land.
 | Console object actions (upload, download, delete) | implemented (M5) |
 | Console streaming upload (unbuffered PUT, unsigned-payload signing, no size cap) | implemented (M5) |
 | Metrics registry (dependency-free Prometheus exposition: counters, gauges, histograms) | implemented (M5) |
+| S3 request metrics and token-gated Prometheus `/metrics` endpoint (per-API counts, errors by code, latency, throughput) | implemented (M5) |
 | Console identity management (users, policies, attach/detach over the admin API) | implemented (M5) |
 | Console groups and service accounts (members, per-user service accounts) | implemented (M5) |
 | Lifecycle / encryption / object lock | planned (M6) |

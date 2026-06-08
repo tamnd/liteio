@@ -42,6 +42,11 @@ func writeXML(w http.ResponseWriter, requestID string, status int, v any) {
 // writeError renders the S3 error envelope with the catalog status. resource is
 // the request path the error refers to.
 func writeError(w http.ResponseWriter, requestID, resource string, ae APIError) {
+	// Report the S3 error code to the metrics recorder, if one is wrapping the
+	// response, so the front door counts errors by code without parsing the body.
+	if cr, ok := w.(codeRecorder); ok {
+		cr.recordError(ae.Code)
+	}
 	resp := errorResponse{
 		Code:      ae.Code,
 		Message:   ae.Description,

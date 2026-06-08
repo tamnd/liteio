@@ -4,6 +4,8 @@ package metrics
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -290,6 +292,31 @@ func TestConcurrentObserveAndScrape(t *testing.T) {
 	_, _, count := hv.With("get").snapshot()
 	if count != want {
 		t.Errorf("histogram count = %d, want %d", count, want)
+	}
+}
+
+func TestHandlerWritesExposition(t *testing.T) {
+	r := NewRegistry()
+	r.NewCounter("liteio_handler_total", "Handler.").Add(7)
+	h := Handler(r)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Errorf("content type = %q, want text/plain", ct)
+	}
+	if !strings.Contains(rec.Body.String(), "liteio_handler_total 7") {
+		t.Errorf("body missing sample\n%s", rec.Body.String())
+	}
+
+	// A non-GET/HEAD method is refused.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/metrics", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST status = %d, want 405", rec.Code)
 	}
 }
 

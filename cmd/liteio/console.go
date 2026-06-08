@@ -11,6 +11,7 @@ import (
 	"github.com/tamnd/liteio/admin"
 	"github.com/tamnd/liteio/auth"
 	"github.com/tamnd/liteio/console"
+	"github.com/tamnd/liteio/metrics"
 	"github.com/tamnd/liteio/object"
 )
 
@@ -23,8 +24,10 @@ var version = "dev"
 // its path prefix (the surface a command-line admin tool drives); the console
 // serves the browser app at every other path and signs its own calls into the very
 // same admin handler in-process, so the browser never holds a secret key. The
-// returned *console.Server is the seam the caller sweeps expired sessions on.
-func buildConsole(cfg config, store *auth.Store, layer object.ObjectLayer, s3Handler http.Handler) (http.Handler, *console.Server, error) {
+// returned *console.Server is the seam the caller sweeps expired sessions on. When a
+// metrics token is configured, the listener also serves the token-gated Prometheus
+// /metrics endpoint over the shared registry (doc 10.4).
+func buildConsole(cfg config, store *auth.Store, layer object.ObjectLayer, s3Handler http.Handler, registry *metrics.Registry) (http.Handler, *console.Server, error) {
 	adminOpts := []admin.Option{admin.WithVersion(version)}
 	// The object layer reports topology and drive health for the info endpoints; a
 	// layer that does not satisfy InfoSource (none does today besides ServerPools)
@@ -54,6 +57,12 @@ func buildConsole(cfg config, store *auth.Store, layer object.ObjectLayer, s3Han
 	// bridge calls adminSrv in-process and does not depend on this mux.
 	mux := http.NewServeMux()
 	mux.Handle(admin.APIPrefix+"/", adminSrv)
+	// The metrics endpoint sits on the console listener (not the public S3 port, where
+	// /metrics would collide with a bucket of that name) and is gated by a bearer
+	// token; with no token configured it is not mounted at all.
+	if registry != nil && cfg.metricsToken != "" {
+		mux.Handle("/metrics", metricsHandler(registry, cfg.metricsToken))
+	}
 	mux.Handle("/", consoleSrv)
 	return mux, consoleSrv, nil
 }
