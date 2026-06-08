@@ -90,6 +90,7 @@ var (
 	errBucketQuotaExceeded          = APIError{"QuotaExceeded", "The requested write would exceed the bucket's configured quota.", http.StatusForbidden}
 	errNoSuchTierConfig             = APIError{"NoSuchTierConfiguration", "The specified tier configuration does not exist.", http.StatusNotFound}
 	errObjectNotArchived            = APIError{"InvalidObjectState", "The operation is not valid for the object's storage class.", http.StatusConflict}
+	errNoSuchReplicationConfig      = APIError{"ReplicationConfigurationNotFoundError", "The replication configuration was not found.", http.StatusNotFound}
 )
 
 // toAPIError maps an object-layer (or lower) error to its S3 catalog entry. A nil
@@ -158,6 +159,8 @@ func toAPIError(err error) APIError {
 		return errNoSuchTierConfig
 	case errors.Is(err, object.ErrNotTiered):
 		return errObjectNotArchived
+	case errors.Is(err, object.ErrNoSuchBucketReplication):
+		return errNoSuchReplicationConfig
 	case errors.Is(err, object.ErrReadQuorum), errors.Is(err, object.ErrWriteQuorum):
 		// A set without quorum is asking the client to back off and retry.
 		return errSlowDown

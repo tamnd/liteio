@@ -335,6 +335,7 @@ func (sp *ServerPools) PutObject(ctx context.Context, bucket, object string, r *
 			name = event.ObjectCreatedPut
 		}
 		sp.notifyPut(ctx, oi, name, opts.SourceIP)
+		sp.maybeReplicate(ctx, bucket, object, oi)
 	}
 	return oi, err
 }
@@ -380,6 +381,7 @@ func (sp *ServerPools) DeleteObject(ctx context.Context, bucket, object string, 
 			sp.addBucketUsage(bucket, -prevSize, -1)
 		}
 		sp.notifyDelete(ctx, bucket, object, oi.VersionID, oi.DeleteMarker, opts.SourceIP)
+		sp.maybeReplicateDelete(ctx, bucket, object, oi.VersionID, oi.DeleteMarker)
 	}
 	return oi, err
 }

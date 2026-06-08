@@ -20,6 +20,7 @@ import (
 
 	"github.com/tamnd/liteio/event"
 	"github.com/tamnd/liteio/object/meta"
+	"github.com/tamnd/liteio/replication"
 	"github.com/tamnd/liteio/tier"
 )
 
@@ -88,6 +89,11 @@ type ObjectOptions struct {
 	// CompleteMultipartUpload (ObjectCreated:CompleteMultipartUpload); regular
 	// PutObject leaves it empty and the write path uses ObjectCreated:Put.
 	EventName string
+
+	// ReplicationSource, when true, marks the request as an incoming replica from
+	// a peer cluster. The object layer stores StatusReplica in obj.meta so the
+	// object is not re-replicated (loop prevention for active-active setups).
+	ReplicationSource bool
 }
 
 // HTTPRangeSpec is a parsed HTTP Range request over a single object. It models
@@ -390,4 +396,9 @@ type ObjectLayer interface {
 	DeleteTierConfig(ctx context.Context, name string) error
 	TransitionObject(ctx context.Context, bucket, object, tierName string, opts ObjectOptions) error
 	RestoreObject(ctx context.Context, bucket, object, versionID string, days int) error
+
+	// replication: bucket replication config management
+	SetBucketReplication(ctx context.Context, bucket string, cfg replication.ReplicationConfig) error
+	GetBucketReplication(ctx context.Context, bucket string) (replication.ReplicationConfig, error)
+	DeleteBucketReplication(ctx context.Context, bucket string) error
 }

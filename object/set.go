@@ -21,6 +21,7 @@ import (
 	"github.com/tamnd/liteio/object/erasure"
 	"github.com/tamnd/liteio/object/meta"
 	"github.com/tamnd/liteio/object/placement"
+	"github.com/tamnd/liteio/replication"
 	"github.com/tamnd/liteio/ssec"
 	"github.com/tamnd/liteio/sses3"
 	"github.com/tamnd/liteio/storage"
@@ -877,6 +878,9 @@ func buildUserMeta(opts ObjectOptions) map[string]string {
 	}
 	if _, ok := m["content-type"]; !ok {
 		m["content-type"] = "application/octet-stream"
+	}
+	if opts.ReplicationSource {
+		m[replication.MetaStatus] = string(replication.StatusReplica)
 	}
 	return m
 }

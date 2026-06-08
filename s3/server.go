@@ -221,6 +221,8 @@ func (s *Server) serveBucket(w http.ResponseWriter, r *http.Request, requestID, 
 			s.getBucketQuota(w, r, requestID, bucket)
 		case q.Has("notification"):
 			s.getBucketNotificationConfiguration(w, r, requestID, bucket)
+		case q.Has("replication"):
+			s.getBucketReplicationConfiguration(w, r, requestID, bucket)
 		case q.Has("versions"):
 			s.listObjectVersions(w, r, requestID, bucket)
 		case q.Has("uploads"):
@@ -246,6 +248,8 @@ func (s *Server) serveBucket(w http.ResponseWriter, r *http.Request, requestID, 
 			s.putBucketQuota(w, r, requestID, bucket)
 		case q.Has("notification"):
 			s.putBucketNotificationConfiguration(w, r, requestID, bucket)
+		case q.Has("replication"):
+			s.putBucketReplicationConfiguration(w, r, requestID, bucket)
 		default:
 			s.createBucket(w, r, requestID, bucket)
 		}
@@ -270,6 +274,9 @@ func (s *Server) serveBucket(w http.ResponseWriter, r *http.Request, requestID, 
 			return
 		case q.Has("notification"):
 			s.deleteNotificationConfiguration(w, r, requestID, bucket)
+			return
+		case q.Has("replication"):
+			s.deleteBucketReplicationConfiguration(w, r, requestID, bucket)
 			return
 		}
 		s.deleteBucket(w, r, requestID, bucket)
