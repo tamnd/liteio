@@ -12,7 +12,10 @@
 //	span.SetAttr("bucket", bucket)
 package trace
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Span is a single unit of work in a distributed trace.
 type Span interface {
@@ -69,3 +72,36 @@ func RequestID(ctx context.Context) string {
 	s, _ := ctx.Value(contextKey{}).(string)
 	return s
 }
+
+// TraceEvent is a completed-request record emitted by the S3 front door after
+// each request finishes. It carries the identifiers and outcome an operator
+// needs to correlate a live stream to a client call.
+type TraceEvent struct {
+	RequestID  string    `json:"requestId"`
+	Method     string    `json:"method"`
+	Path       string    `json:"path"`
+	DurationMs int64     `json:"durationMs"`
+	StatusCode int       `json:"statusCode"`
+	Time       time.Time `json:"time"`
+}
+
+// TraceEmitter receives completed-request events.
+type TraceEmitter interface {
+	Emit(TraceEvent)
+}
+
+// nopEmitter discards every event. It is the default so the S3 front door pays
+// only a nil-check when no live trace subscriber is connected.
+type nopEmitter struct{}
+
+func (nopEmitter) Emit(TraceEvent) {}
+
+// globalEmitter is the active TraceEmitter; replaced by SetGlobalEmitter.
+var globalEmitter TraceEmitter = nopEmitter{}
+
+// SetGlobalEmitter replaces the global trace emitter. Call it once at startup
+// to wire the ring buffer (or any TraceEmitter) before requests arrive.
+func SetGlobalEmitter(e TraceEmitter) { globalEmitter = e }
+
+// Emit sends e to the global trace emitter.
+func Emit(e TraceEvent) { globalEmitter.Emit(e) }

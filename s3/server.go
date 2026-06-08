@@ -14,6 +14,7 @@ import (
 	"github.com/tamnd/liteio/metrics"
 	"github.com/tamnd/liteio/object"
 	"github.com/tamnd/liteio/s3/sign"
+	"github.com/tamnd/liteio/trace"
 )
 
 // ctxKeyAccessKey is the context key used to carry the SigV4-verified access
@@ -93,28 +94,84 @@ type resource struct {
 	object string
 }
 
+// statusRecorder wraps a ResponseWriter to capture the HTTP status code written
+// by the handler. It is used when metrics are disabled but we still need the
+// status for the trace event.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func newStatusRecorder(w http.ResponseWriter) *statusRecorder {
+	return &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+}
+
+func (sr *statusRecorder) WriteHeader(code int) {
+	sr.status = code
+	sr.ResponseWriter.WriteHeader(code)
+}
+
+// Flush forwards to the underlying writer when it supports flushing.
+func (sr *statusRecorder) Flush() {
+	if f, ok := sr.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // ServeHTTP implements http.Handler. OPTIONS requests are dispatched to the CORS
 // preflight handler immediately, before SigV4 verification, because S3 CORS
 // preflights are unauthenticated. All other requests go through the normal
 // authenticate-then-dispatch path; when metrics are enabled the whole flow is
-// wrapped for instrumentation.
+// wrapped for instrumentation. In all cases a TraceEvent is emitted after the
+// request completes so the live trace stream has full coverage.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		s.handleCORSPreflight(w, r)
 		return
 	}
+	start := s.now()
 	if s.metrics == nil {
-		s.serve(w, r)
+		sr := newStatusRecorder(w)
+		s.serve(sr, r)
+		dur := s.now().Sub(start)
+		requestID := requestIDFromCommonHeaders(sr)
+		trace.Emit(trace.TraceEvent{
+			RequestID:  requestID,
+			Method:     r.Method,
+			Path:       r.URL.Path,
+			DurationMs: dur.Milliseconds(),
+			StatusCode: sr.status,
+			Time:       start,
+		})
 		return
 	}
 	rec := newMetricsRecorder(w)
 	counter := &countingReader{r: r.Body}
 	r.Body = counter
 	s.metrics.inFlight.Inc()
-	start := s.now()
 	s.serve(rec, r)
 	s.metrics.inFlight.Dec()
-	s.metrics.observe(operationName(r, s.parseResource(r)), rec, counter.n, s.now().Sub(start).Seconds())
+	dur := s.now().Sub(start)
+	s.metrics.observe(operationName(r, s.parseResource(r)), rec, counter.n, dur.Seconds())
+	requestID := requestIDFromCommonHeaders(rec)
+	trace.Emit(trace.TraceEvent{
+		RequestID:  requestID,
+		Method:     r.Method,
+		Path:       r.URL.Path,
+		DurationMs: dur.Milliseconds(),
+		StatusCode: rec.statusCode(),
+		Time:       start,
+	})
+}
+
+// requestIDFromCommonHeaders extracts the x-amz-request-id from a response
+// writer that may or may not expose the written headers. It is a best-effort
+// read; an empty string is fine (the consumer tolerates it).
+func requestIDFromCommonHeaders(w http.ResponseWriter) string {
+	if h, ok := w.(interface{ Header() http.Header }); ok {
+		return h.Header().Get("x-amz-request-id")
+	}
+	return ""
 }
 
 // serve authenticates, parses the resource, and dispatches the request.
