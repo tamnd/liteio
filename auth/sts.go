@@ -151,6 +151,45 @@ func (s *Store) ValidateSessionToken(accessKey, token string) bool {
 	return subtle.ConstantTimeCompare([]byte(rec.sessionToken), []byte(token)) == 1
 }
 
+// ValidateSession enforces the X-Amz-Security-Token contract for a request whose
+// signature has already verified. A session credential (minted by AssumeRole or a
+// federated flow) carries two secrets: the secret key the request is signed with and
+// the session token. The signature proves the caller holds the secret key, but AWS
+// clients always send the token alongside, so liteio requires it too. Requiring it
+// keeps liteio interoperable and, more importantly, stops an expired session from
+// signing requests: the signature path (Secret) resolves a session's key regardless
+// of expiry, and an authenticate-only deployment never reaches the lazy expiry check
+// in IsAllowed, so this is where a session's TTL is enforced for every request.
+//
+// The contract, by what the access key names:
+//   - long-lived key (root, user, service account), no token: allowed
+//   - long-lived key carrying a token: rejected, the token names no session
+//   - session key, no token: rejected, the credential is half-presented
+//   - session key, token does not match: rejected as ErrInvalidToken
+//   - session key past its expiry: rejected as ErrExpired
+//   - session key, matching live token: allowed
+func (s *Store) ValidateSession(accessKey, token string) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rec, isSession := s.sessions[accessKey]
+	if !isSession {
+		if token != "" {
+			return fmt.Errorf("%w: security token presented for a non-session credential", ErrInvalidToken)
+		}
+		return nil
+	}
+	if token == "" {
+		return fmt.Errorf("%w: session credential requires a security token", ErrInvalidToken)
+	}
+	if !s.now().Before(rec.expiry) {
+		return fmt.Errorf("%w: session %q", ErrExpired, accessKey)
+	}
+	if subtle.ConstantTimeCompare([]byte(rec.sessionToken), []byte(token)) != 1 {
+		return fmt.Errorf("%w: security token does not match the session", ErrInvalidToken)
+	}
+	return nil
+}
+
 // RevokeSession deletes a session before its TTL, so a leaked credential can be
 // cut off. A missing access key returns ErrNotFound.
 func (s *Store) RevokeSession(accessKey string) error {
