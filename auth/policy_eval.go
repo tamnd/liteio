@@ -23,6 +23,22 @@ func BucketARN(bucket string) string { return arnPrefix + bucket }
 // ObjectARN returns the ARN naming an object: arn:aws:s3:::bucket/key.
 func ObjectARN(bucket, key string) string { return arnPrefix + bucket + "/" + key }
 
+// Decision is the three-valued outcome of evaluating a request against a set of
+// statements: no statement matched, a matching Allow, or a matching Deny. The
+// two-valued Evaluate collapses None to a denial; the three-valued form is what
+// lets bucket policies and identity policies be combined (Authorize), where a
+// matched Deny in either path must beat a matched Allow in the other.
+type Decision int
+
+const (
+	// DecisionNone means no statement matched the request.
+	DecisionNone Decision = iota
+	// DecisionAllow means a matching Allow and no matching Deny.
+	DecisionAllow
+	// DecisionDeny means a matching Deny, which is final.
+	DecisionDeny
+)
+
 // Evaluate decides a request against a set of policies using AWS rules:
 //
 //  1. Deny by default — with no matching Allow the request is denied.
@@ -35,19 +51,26 @@ func ObjectARN(bucket, key string) string { return arnPrefix + bucket + "/" + ke
 // anywhere in that set wins and an Allow anywhere suffices, the caller composes
 // an identity's permissions simply by passing every applicable policy.
 func Evaluate(policies []Policy, req Request) bool {
-	allowed := false
+	return decide(policies, req) == DecisionAllow
+}
+
+// decide is the three-valued core of Evaluate: it returns DecisionDeny on the
+// first matching Deny, otherwise DecisionAllow if any statement allowed, else
+// DecisionNone.
+func decide(policies []Policy, req Request) Decision {
+	d := DecisionNone
 	for _, p := range policies {
 		for i := range p.Statements {
 			if !p.Statements[i].matches(req) {
 				continue
 			}
 			if p.Statements[i].Effect == Deny {
-				return false // explicit deny is final
+				return DecisionDeny // explicit deny is final
 			}
-			allowed = true
+			d = DecisionAllow
 		}
 	}
-	return allowed
+	return d
 }
 
 // matches reports whether the statement applies to the request: its action side
