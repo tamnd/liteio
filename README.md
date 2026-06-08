@@ -193,7 +193,8 @@ the living source of truth and is updated as milestones land.
 | Admin info/health API + console cluster dashboard (topology, drive reachability, per-set quorum/availability) | implemented (M5) |
 | Drive capacity reporting (statfs across local + remote drives, raw + usable bytes per set and deployment) | implemented (M5) |
 | Console bucket browser (signed in-process S3 bridge, bucket list/create, object browse) | implemented (M5) |
-| Console object actions (upload small objects, download, delete) | implemented (M5) |
+| Console object actions (upload, download, delete) | implemented (M5) |
+| Console streaming upload (unbuffered PUT, unsigned-payload signing, no size cap) | implemented (M5) |
 | Console identity management (users, policies, attach/detach over the admin API) | implemented (M5) |
 | Console groups and service accounts (members, per-user service accounts) | implemented (M5) |
 | Lifecycle / encryption / object lock | planned (M6) |

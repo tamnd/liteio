@@ -149,11 +149,6 @@ function renderSets(info) {
     <p class="muted">* capacity is partial: not every drive reported.</p>`;
 }
 
-// maxUpload caps a console upload. The signed bridge buffers and hashes the whole
-// body for a single-shot signature (it does not do chunked payload signing), so the
-// console uploads small objects only; larger/streaming uploads are a planned feature.
-const maxUpload = 1024 * 1024;
-
 // s3 calls the S3 bridge. Unlike api() it does not send a JSON content type (S3
 // speaks XML) and returns the raw Response so callers can read text, a blob, or a
 // status. An optional body (a Blob or ArrayBuffer) rides a PUT through the bridge.
@@ -285,17 +280,13 @@ function objectPath(bucket, key) {
 }
 
 // uploadObject PUTs a chosen file into the bucket through the S3 bridge, then
-// refreshes the listing. The bridge buffers and signs the whole body, so the upload
-// is capped at maxUpload; a larger file is refused with a clear message rather than a
-// confusing bridge error.
+// refreshes the listing. The bridge streams the body straight to the object store, so
+// the upload is bounded by the store, not by the console; the browser sends the file
+// with its own content length and the bridge signs it with an unsigned-payload hash.
 async function uploadObject(bucket, file) {
   const err = document.getElementById("object-error");
   if (!file) {
     err.textContent = "Choose a file to upload.";
-    return;
-  }
-  if (file.size > maxUpload) {
-    err.textContent = `File is too large for the console uploader (${bytes(maxUpload)} limit). Large uploads are a planned feature.`;
     return;
   }
   const r = await s3("PUT", objectPath(bucket, file.name), file);
