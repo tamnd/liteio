@@ -18,6 +18,7 @@ import (
 // TierType identifies the backend technology for a remote tier.
 type TierType string
 
+// Remote tier backend types.
 const (
 	TierTypeS3    TierType = "s3"
 	TierTypeAzure TierType = "azure"
