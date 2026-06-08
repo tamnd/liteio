@@ -76,6 +76,7 @@ type Server struct {
 	info       InfoSource           // deployment topology for info/health (nil omits those routes)
 	tiers      TierLayer            // tier config management (nil omits those routes)
 	rebalancer RebalanceLayer       // rebalance/decommission (nil omits those routes)
+	perf       PerfLayer            // built-in perf test (nil omits the route)
 	version    string               // build version reported by the info endpoint
 	now        func() time.Time     // clock seam for signature skew (tests inject)
 	mux        *http.ServeMux
@@ -157,6 +158,10 @@ func (s *Server) routes() *http.ServeMux {
 		route{"GET " + apiPrefix + "/tiers/{name}", "admin:GetTier", s.getTier},
 		route{"PUT " + apiPrefix + "/tiers/{name}", "admin:SetTier", s.putTier},
 		route{"DELETE " + apiPrefix + "/tiers/{name}", "admin:DeleteTier", s.deleteTier},
+	)
+	// Built-in perf test; handler returns 501 when perf layer is nil.
+	rs = append(rs,
+		route{"POST " + apiPrefix + "/perf", "admin:Perf", s.startPerf},
 	)
 	// Rebalance and decommission routes; handlers return 501 when rebalancer is nil.
 	rs = append(rs,
