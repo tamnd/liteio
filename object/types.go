@@ -300,6 +300,11 @@ type ObjectLayer interface {
 	GetBucketTagging(ctx context.Context, bucket string) ([]byte, error)
 	DeleteBucketTagging(ctx context.Context, bucket string) error
 
+	// bucket lifecycle configuration (storage only; scanner execution is deferred)
+	SetBucketLifecycle(ctx context.Context, bucket string, doc []byte) error
+	GetBucketLifecycle(ctx context.Context, bucket string) ([]byte, error)
+	DeleteBucketLifecycle(ctx context.Context, bucket string) error
+
 	// copy
 	CopyObject(ctx context.Context, srcBucket, srcObject, dstBucket, dstObject string, srcInfo ObjectInfo, opts ObjectOptions) (ObjectInfo, error)
 	CopyObjectPart(ctx context.Context, srcBucket, srcObject, dstBucket, dstObject, uploadID string, partID int, srcInfo ObjectInfo, rng *HTTPRangeSpec, opts ObjectOptions) (PartInfo, error)

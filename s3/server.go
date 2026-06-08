@@ -211,6 +211,8 @@ func (s *Server) serveBucket(w http.ResponseWriter, r *http.Request, requestID, 
 			s.getBucketPolicy(w, r, requestID, bucket)
 		case q.Has("tagging"):
 			s.getBucketTagging(w, r, requestID, bucket)
+		case q.Has("lifecycle"):
+			s.getBucketLifecycleConfiguration(w, r, requestID, bucket)
 		case q.Has("versions"):
 			s.listObjectVersions(w, r, requestID, bucket)
 		case q.Has("uploads"):
@@ -226,6 +228,8 @@ func (s *Server) serveBucket(w http.ResponseWriter, r *http.Request, requestID, 
 			s.putBucketPolicy(w, r, requestID, bucket)
 		case q.Has("tagging"):
 			s.putBucketTagging(w, r, requestID, bucket)
+		case q.Has("lifecycle"):
+			s.putBucketLifecycleConfiguration(w, r, requestID, bucket)
 		default:
 			s.createBucket(w, r, requestID, bucket)
 		}
@@ -238,6 +242,9 @@ func (s *Server) serveBucket(w http.ResponseWriter, r *http.Request, requestID, 
 			return
 		case q.Has("tagging"):
 			s.deleteBucketTagging(w, r, requestID, bucket)
+			return
+		case q.Has("lifecycle"):
+			s.deleteBucketLifecycleConfiguration(w, r, requestID, bucket)
 			return
 		}
 		s.deleteBucket(w, r, requestID, bucket)

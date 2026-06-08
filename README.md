@@ -207,9 +207,10 @@ the living source of truth and is updated as milestones land.
 | S3 request metrics and token-gated Prometheus `/metrics` endpoint (per-API counts, errors by code, latency, throughput) | implemented (M5) |
 | Cluster capacity and health metrics (drives online, sets below quorum, raw/usable bytes, reactive-heal queue) | implemented (M5) |
 | Object and bucket tagging (Put/Get/DeleteObjectTagging, Put/Get/DeleteBucketTagging; `x-amz-tagging` on PutObject) | implemented (M6) |
+| Bucket lifecycle configuration (Put/Get/DeleteBucketLifecycleConfiguration; XML stored under `.liteio.sys/lifecycle`; scanner execution deferred) | implemented (M6) |
 | Console identity management (users, policies, attach/detach over the admin API) | implemented (M5) |
 | Console groups and service accounts (members, per-user service accounts) | implemented (M5) |
-| Lifecycle / encryption / object lock | planned (M6) |
+| Lifecycle scanner execution / encryption / object lock | planned (M6) |
 | Replication / tiering / events | planned (M7) |
 | Rebalance / decommission | planned (M8) |
 

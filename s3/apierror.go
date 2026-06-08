@@ -59,8 +59,9 @@ var (
 	errInvalidCopyDest         = APIError{"InvalidRequest", "This copy request is illegal because it is trying to copy an object to itself without changing the object's metadata, storage class, website redirect location or encryption attributes.", http.StatusBadRequest}
 	errMalformedXML            = APIError{"MalformedXML", "The XML you provided was not well-formed or did not validate against our published schema.", http.StatusBadRequest}
 	errMalformedPolicy         = APIError{"MalformedPolicy", "The policy is not in the valid JSON format or contains an unsupported element.", http.StatusBadRequest}
-	errNoSuchBucketPolicy      = APIError{"NoSuchBucketPolicy", "The bucket policy does not exist.", http.StatusNotFound}
-	errNoSuchTagSet            = APIError{"NoSuchTagSet", "The TagSet does not exist.", http.StatusNotFound}
+	errNoSuchBucketPolicy              = APIError{"NoSuchBucketPolicy", "The bucket policy does not exist.", http.StatusNotFound}
+	errNoSuchTagSet                    = APIError{"NoSuchTagSet", "The TagSet does not exist.", http.StatusNotFound}
+	errNoSuchLifecycleConfiguration    = APIError{"NoSuchLifecycleConfiguration", "The lifecycle configuration does not exist.", http.StatusNotFound}
 	errInvalidTag              = APIError{"InvalidTag", "The Tag value you have provided is invalid.", http.StatusBadRequest}
 	errBadTagging              = APIError{"InvalidTag", "Object tags exceed 10 or bucket tags exceed 50.", http.StatusBadRequest}
 	errMissingContentLength    = APIError{"MissingContentLength", "You must provide the Content-Length HTTP header.", http.StatusBadRequest}
@@ -102,6 +103,8 @@ func toAPIError(err error) APIError {
 		return errInvalidTag
 	case errors.Is(err, object.ErrTooManyTags):
 		return errBadTagging
+	case errors.Is(err, object.ErrNoSuchBucketLifecycle):
+		return errNoSuchLifecycleConfiguration
 	case errors.Is(err, object.ErrNoSuchUpload):
 		return errNoSuchUpload
 	case errors.Is(err, object.ErrInvalidPart):
