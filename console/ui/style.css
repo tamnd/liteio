@@ -45,6 +45,11 @@ nav.tabs .tab.active { color: var(--accent); border-bottom-color: var(--accent);
 #mkbucket input { padding: 0.45rem 0.6rem; border: 1px solid var(--border); border-radius: 6px; font: inherit; }
 #mkbucket button { margin: 0; padding: 0.45rem 0.9rem; }
 table.sets button.bucket { font-weight: 600; }
+#upload { display: flex; gap: 0.5rem; align-items: center; margin: 0.5rem 0; }
+#upload button { margin: 0; padding: 0.45rem 0.9rem; }
+td.actions { white-space: nowrap; }
+td.actions button { margin: 0 0.5rem 0 0; }
+td.actions button.del { color: #c0392b; }
 h2 { font-size: 1.1rem; margin: 1.5rem 0 0.75rem; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.75rem; margin: 0; }
 .grid dt { font-size: 0.8rem; color: #777; }
