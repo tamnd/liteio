@@ -226,6 +226,117 @@ func TestBridgeSignsAdminCall(t *testing.T) {
 	}
 }
 
+// captureHandler records the request it received so a test can assert what the bridge
+// signed and forwarded, and returns a canned 200.
+type captureHandler struct {
+	method string
+	path   string
+	host   string
+	auth   string
+	body   string
+	hit    bool
+}
+
+func (c *captureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	c.hit = true
+	c.method = r.Method
+	c.path = r.URL.Path
+	c.host = r.Host
+	c.auth = r.Header.Get("Authorization")
+	b, _ := io.ReadAll(r.Body)
+	c.body = string(b)
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, "ok")
+}
+
+// newHarnessWithS3 is newHarness with an S3 handler wired into the bucket-browser
+// bridge.
+func newHarnessWithS3(t *testing.T, s3 http.Handler) *harness {
+	t.Helper()
+	store := auth.NewStore("root", "rootsecret")
+	if err := store.AddUser(auth.User{AccessKey: adminKey, SecretKey: adminSec, Policies: []string{"consoleAdmin"}}); err != nil {
+		t.Fatal(err)
+	}
+	clock := time.Unix(1_700_000_000, 0).UTC()
+	adminAPI := admin.NewServer(store, store, admin.WithClock(func() time.Time { return clock }))
+	c, err := NewServer(store, store, adminAPI,
+		WithS3(s3),
+		WithInsecureCookie(),
+		WithClock(func() time.Time { return clock }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(c)
+	t.Cleanup(srv.Close)
+	return &harness{t: t, srv: srv, store: store, clock: &clock}
+}
+
+func TestS3BridgeSignsAndMapsPath(t *testing.T) {
+	rec := &captureHandler{}
+	h := newHarnessWithS3(t, rec)
+	cl, resp := h.login(adminKey, adminSec)
+	resp.Body.Close()
+
+	// A list-objects call: /api/s3/<bucket>?list-type=2 maps to /<bucket> with the
+	// query preserved, signed as the admin, under the synthetic S3 host.
+	r := h.call(cl, http.MethodGet, "/api/s3/photos?list-type=2", nil)
+	r.Body.Close()
+	if !rec.hit {
+		t.Fatal("the S3 bridge did not reach the S3 handler")
+	}
+	if rec.path != "/photos" {
+		t.Errorf("forwarded path = %q, want /photos", rec.path)
+	}
+	if rec.host != s3BridgeHost {
+		t.Errorf("forwarded host = %q, want %q", rec.host, s3BridgeHost)
+	}
+	if !strings.HasPrefix(rec.auth, "AWS4-HMAC-SHA256 ") {
+		t.Errorf("forwarded call was not SigV4-signed, Authorization = %q", rec.auth)
+	}
+}
+
+func TestS3BridgeListBucketsHitsRoot(t *testing.T) {
+	rec := &captureHandler{}
+	h := newHarnessWithS3(t, rec)
+	cl, resp := h.login(adminKey, adminSec)
+	resp.Body.Close()
+
+	// /api/s3/ is the service root (ListBuckets): it maps to "/".
+	r := h.call(cl, http.MethodGet, "/api/s3/", nil)
+	r.Body.Close()
+	if !rec.hit || rec.path != "/" {
+		t.Errorf("ListBuckets mapped to %q (hit=%v), want /", rec.path, rec.hit)
+	}
+}
+
+func TestS3BridgeNeedsSession(t *testing.T) {
+	rec := &captureHandler{}
+	h := newHarnessWithS3(t, rec)
+	cl := h.client() // never logs in
+	resp := h.call(cl, http.MethodGet, "/api/s3/photos", nil)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated S3 bridge = %d, want 401", resp.StatusCode)
+	}
+	if rec.hit {
+		t.Error("an unauthenticated call must not reach the S3 handler")
+	}
+}
+
+func TestS3BridgeAbsentWithoutHandler(t *testing.T) {
+	// The default harness wires no S3 handler, so /api/s3/ is not a bridge route and
+	// the SPA fallback serves the shell rather than a 401 or a nil-handler panic.
+	h := newHarness(t)
+	cl, resp := h.login(adminKey, adminSec)
+	resp.Body.Close()
+	r := h.call(cl, http.MethodGet, "/api/s3/photos", nil)
+	defer r.Body.Close()
+	body, _ := io.ReadAll(r.Body)
+	if r.StatusCode != http.StatusOK || !strings.Contains(string(body), "liteio console") {
+		t.Errorf("without S3 handler, /api/s3/ = %d, want the SPA shell", r.StatusCode)
+	}
+}
+
 func TestBridgeNeedsSession(t *testing.T) {
 	h := newHarness(t)
 	cl := h.client() // never logs in

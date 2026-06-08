@@ -62,6 +62,7 @@ type Server struct {
 	authz     Authorizer           // gates login on admin rights
 	admin     http.Handler         // in-process admin API the bridge forwards to
 	adminPath string               // admin route prefix the bridge targets
+	s3        http.Handler         // in-process S3 API the bucket browser forwards to (nil disables it)
 	region    string               // SigV4 region the bridge signs with
 	sessions  *sessionStore
 	now       func() time.Time
@@ -85,6 +86,11 @@ func WithInsecureCookie() Option { return func(s *Server) { s.secure = false } }
 // derives the region from the signature's own scope, so any value verifies as long
 // as the bridge is self-consistent; the default is "us-east-1".
 func WithRegion(region string) Option { return func(s *Server) { s.region = region } }
+
+// WithS3 wires the in-process S3 API the bucket browser forwards signed calls to.
+// Without it the console serves identity and cluster views only and the /api/s3
+// bridge route is not registered (a 404 the SPA reads as "no object browser here").
+func WithS3(h http.Handler) Option { return func(s *Server) { s.s3 = h } }
 
 // NewServer builds the console over the credential store and authorizer that gate
 // login and the admin handler the bridge forwards signed calls to.
@@ -122,6 +128,11 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/logout", s.handleLogout)
 	mux.HandleFunc("GET /api/session", s.handleSession)
 	mux.HandleFunc("/api/admin/", s.handleBridge)
+	// The S3 bridge backs the bucket browser; register it only when an S3 handler is
+	// wired, so a node without an object layer simply does not advertise it.
+	if s.s3 != nil {
+		mux.HandleFunc("/api/s3/", s.handleS3Bridge)
+	}
 	// Anything the SPA's client-side router owns falls through to the assets,
 	// which serve index.html for unknown paths.
 	mux.Handle("/", s.staticH)
@@ -145,6 +156,12 @@ func (h spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	clean := name[1:] // strip leading slash for fs.FS
+	if !fs.ValidPath(clean) {
+		// A path fs.FS rejects (a trailing slash, "..", and the like) is never a real
+		// asset; serve the shell so the client-side router can resolve it.
+		h.serveIndex(w, r)
+		return
+	}
 	f, err := h.fsys.Open(clean)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {

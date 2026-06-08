@@ -118,7 +118,7 @@ func run(argv []string) error {
 	// expired console sessions in the background. Disabled when no address is set.
 	var consoleHTTP *http.Server
 	if cfg.consoleAddress != "" {
-		consoleHandler, csrv, cerr := buildConsole(cfg, store, layer)
+		consoleHandler, csrv, cerr := buildConsole(cfg, store, layer, handler)
 		if cerr != nil {
 			return cerr
 		}

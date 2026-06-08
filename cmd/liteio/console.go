@@ -24,7 +24,7 @@ var version = "dev"
 // serves the browser app at every other path and signs its own calls into the very
 // same admin handler in-process, so the browser never holds a secret key. The
 // returned *console.Server is the seam the caller sweeps expired sessions on.
-func buildConsole(cfg config, store *auth.Store, layer object.ObjectLayer) (http.Handler, *console.Server, error) {
+func buildConsole(cfg config, store *auth.Store, layer object.ObjectLayer, s3Handler http.Handler) (http.Handler, *console.Server, error) {
 	adminOpts := []admin.Option{admin.WithVersion(version)}
 	// The object layer reports topology and drive health for the info endpoints; a
 	// layer that does not satisfy InfoSource (none does today besides ServerPools)
@@ -34,7 +34,10 @@ func buildConsole(cfg config, store *auth.Store, layer object.ObjectLayer) (http
 	}
 	adminSrv := admin.NewServer(store, store, adminOpts...)
 
-	opts := []console.Option{}
+	// Wire the S3 data plane into the console so the bucket browser can list buckets
+	// and browse objects through the signed bridge, against the same handler the S3
+	// clients use.
+	opts := []console.Option{console.WithS3(s3Handler)}
 	if cfg.consoleRegion != "" {
 		opts = append(opts, console.WithRegion(cfg.consoleRegion))
 	}

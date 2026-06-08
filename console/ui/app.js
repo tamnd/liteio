@@ -58,19 +58,38 @@ function renderApp(session) {
       <div><span class="muted">${session.accessKey}</span>
       <button class="link" id="logout">Sign out</button></div>
     </div>
-    <section id="dashboard"><p class="muted">Loading cluster info...</p></section>`;
+    <nav class="tabs">
+      <button class="tab" data-view="cluster">Cluster</button>
+      <button class="tab" data-view="buckets">Buckets</button>
+    </nav>
+    <section id="view"><p class="muted">Loading...</p></section>`;
   document.getElementById("logout").addEventListener("click", async () => {
     await api("POST", "/api/logout");
     renderLogin("");
   });
-  loadDashboard();
+  for (const tab of document.querySelectorAll(".tab")) {
+    tab.addEventListener("click", () => selectView(tab.dataset.view));
+  }
+  selectView("cluster");
+}
+
+// selectView switches the active tab and renders its view into #view.
+function selectView(name) {
+  for (const tab of document.querySelectorAll(".tab")) {
+    tab.classList.toggle("active", tab.dataset.view === name);
+  }
+  if (name === "buckets") {
+    loadBuckets();
+  } else {
+    loadDashboard();
+  }
 }
 
 // loadDashboard fetches the deployment topology and health through the bridge and
 // renders the cluster overview. A 404 means the node serves IAM only (no object
 // layer), so the dashboard says so rather than erroring.
 async function loadDashboard() {
-  const el = document.getElementById("dashboard");
+  const el = document.getElementById("view");
   const r = await api("GET", "/api/admin/info");
   if (r.status === 404) {
     el.innerHTML = `<p class="muted">This node serves identity management only.</p>`;
@@ -125,6 +144,109 @@ function renderSets(info) {
       <tbody>${rows.join("")}</tbody>
     </table>
     <p class="muted">* capacity is partial: not every drive reported.</p>`;
+}
+
+// s3 calls the S3 bridge. Unlike api() it does not send a JSON content type (S3
+// speaks XML) and returns the raw Response so callers can read text or status.
+async function s3(method, path) {
+  return fetch("/api/s3" + path, {
+    method,
+    headers: { "X-Liteio-Console": "1" },
+    credentials: "same-origin",
+  });
+}
+
+// parseXML turns an S3 XML response body into a Document for querying.
+function parseXML(text) {
+  return new DOMParser().parseFromString(text, "application/xml");
+}
+
+// loadBuckets lists the deployment's buckets through the S3 bridge and renders them
+// as a table; each row opens the object browser for that bucket. A 404 means no S3
+// handler is wired (an identity-only node).
+async function loadBuckets() {
+  const el = document.getElementById("view");
+  const r = await s3("GET", "/");
+  if (r.status === 404) {
+    el.innerHTML = `<p class="muted">Object storage is not available on this node.</p>`;
+    return;
+  }
+  if (!r.ok) {
+    el.innerHTML = `<p class="error">Could not list buckets.</p>`;
+    return;
+  }
+  const doc = parseXML(await r.text());
+  const buckets = [...doc.querySelectorAll("Buckets > Bucket")].map((b) => ({
+    name: b.querySelector("Name")?.textContent ?? "",
+    created: b.querySelector("CreationDate")?.textContent ?? "",
+  }));
+  const rows = buckets.map((b) => `<tr>
+      <td><button class="link bucket" data-bucket="${esc(b.name)}">${esc(b.name)}</button></td>
+      <td class="muted">${esc(b.created)}</td>
+    </tr>`).join("");
+  el.innerHTML = `
+    <div class="topbar">
+      <h2>Buckets</h2>
+      <form id="mkbucket"><input id="bname" placeholder="new-bucket-name" /><button type="submit">Create</button></form>
+    </div>
+    <div class="error" id="bucket-error"></div>
+    ${buckets.length ? `<table class="sets"><thead><tr><th>Name</th><th>Created</th></tr></thead><tbody>${rows}</tbody></table>`
+      : `<p class="muted">No buckets yet.</p>`}`;
+  document.getElementById("mkbucket").addEventListener("submit", (e) => {
+    e.preventDefault();
+    createBucket(document.getElementById("bname").value.trim());
+  });
+  for (const b of document.querySelectorAll(".bucket")) {
+    b.addEventListener("click", () => loadObjects(b.dataset.bucket));
+  }
+}
+
+// createBucket creates a bucket through the S3 bridge, then refreshes the list. A
+// failed create shows the S3 error rather than silently doing nothing.
+async function createBucket(name) {
+  const err = document.getElementById("bucket-error");
+  if (!name) {
+    err.textContent = "Enter a bucket name.";
+    return;
+  }
+  const r = await s3("PUT", "/" + encodeURIComponent(name));
+  if (!r.ok) {
+    err.textContent = `Create failed (${r.status}).`;
+    return;
+  }
+  loadBuckets();
+}
+
+// loadObjects lists the objects in a bucket (ListObjectsV2, top level) and renders
+// them with a back link to the bucket list.
+async function loadObjects(bucket) {
+  const el = document.getElementById("view");
+  const r = await s3("GET", "/" + encodeURIComponent(bucket) + "?list-type=2");
+  if (!r.ok) {
+    el.innerHTML = `<p class="error">Could not list objects in ${esc(bucket)} (${r.status}).</p>
+      <button class="link" id="back">Back to buckets</button>`;
+    document.getElementById("back").addEventListener("click", loadBuckets);
+    return;
+  }
+  const doc = parseXML(await r.text());
+  const objects = [...doc.querySelectorAll("Contents")].map((c) => ({
+    key: c.querySelector("Key")?.textContent ?? "",
+    size: Number(c.querySelector("Size")?.textContent ?? 0),
+    modified: c.querySelector("LastModified")?.textContent ?? "",
+  }));
+  const rows = objects.map((o) => `<tr>
+      <td>${esc(o.key)}</td>
+      <td>${bytes(o.size)}</td>
+      <td class="muted">${esc(o.modified)}</td>
+    </tr>`).join("");
+  el.innerHTML = `
+    <div class="topbar">
+      <h2>${esc(bucket)}</h2>
+      <button class="link" id="back">Back to buckets</button>
+    </div>
+    ${objects.length ? `<table class="sets"><thead><tr><th>Key</th><th>Size</th><th>Modified</th></tr></thead><tbody>${rows}</tbody></table>`
+      : `<p class="muted">This bucket is empty.</p>`}`;
+  document.getElementById("back").addEventListener("click", loadBuckets);
 }
 
 // bytes formats a byte count in binary units (KiB, MiB, ...) for the dashboard.
