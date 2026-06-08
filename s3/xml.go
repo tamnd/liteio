@@ -327,3 +327,45 @@ type legalHoldXML struct {
 	XMLNS   string   `xml:"xmlns,attr,omitempty"`
 	Status  string   `xml:"Status"`
 }
+
+// --- ListBucketResult (GET /bucket, ListObjects v1) --------------------------
+
+type listBucketV1Result struct {
+	XMLName        xml.Name            `xml:"ListBucketResult"`
+	XMLNS          string              `xml:"xmlns,attr"`
+	Name           string              `xml:"Name"`
+	Prefix         string              `xml:"Prefix"`
+	Marker         string              `xml:"Marker"`
+	NextMarker     string              `xml:"NextMarker,omitempty"`
+	MaxKeys        int                 `xml:"MaxKeys"`
+	Delimiter      string              `xml:"Delimiter,omitempty"`
+	IsTruncated    bool                `xml:"IsTruncated"`
+	Contents       []objectEntry       `xml:"Contents"`
+	CommonPrefixes []commonPrefixEntry `xml:"CommonPrefixes"`
+}
+
+type commonPrefixEntry struct {
+	Prefix string `xml:"Prefix"`
+}
+
+// --- GetObjectAttributes (GET /bucket/key?attributes) -----------------------
+
+type getObjectAttributesResponse struct {
+	XMLName      xml.Name             `xml:"GetObjectAttributesResponse"`
+	XMLNS        string               `xml:"xmlns,attr"`
+	ETag         string               `xml:"ETag,omitempty"`
+	StorageClass string               `xml:"StorageClass,omitempty"`
+	ObjectSize   int64                `xml:"ObjectSize,omitempty"`
+	ObjectParts  *objectPartsResponse `xml:"ObjectParts,omitempty"`
+}
+
+type objectPartsResponse struct {
+	TotalPartsCount int              `xml:"TotalPartsCount"`
+	Parts           []objectPartAttr `xml:"Part"`
+}
+
+type objectPartAttr struct {
+	PartNumber    int    `xml:"PartNumber"`
+	Size          int64  `xml:"Size"`
+	ChecksumCRC32 string `xml:"ChecksumCRC32,omitempty"`
+}
