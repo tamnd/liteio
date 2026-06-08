@@ -211,6 +211,56 @@ func TestBuildConsoleS3Browse(t *testing.T) {
 	}
 }
 
+// TestBuildConsoleS3ObjectRoundTrip drives the object actions the browser exposes
+// over the S3 bridge: sign in, create a bucket, upload a small object, download it
+// back byte-for-byte, delete it, and confirm it is gone. It proves the buffered
+// signed bridge carries a PUT body and a GET response body, not just empty calls.
+func TestBuildConsoleS3ObjectRoundTrip(t *testing.T) {
+	store := auth.NewStore("liteioadmin", "liteioadmin")
+	layer := newDriveLayer(t, 4, 2)
+	s3Handler := s3.NewServer(layer, store)
+	handler, _, err := buildConsole(rootCfg(), store, layer, s3Handler)
+	if err != nil {
+		t.Fatalf("buildConsole: %v", err)
+	}
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	login := mustJSON(t, map[string]string{"accessKey": "liteioadmin", "secretKey": "liteioadmin"})
+	if s := post(t, client, srv.URL+"/api/login", login); s != http.StatusOK {
+		t.Fatalf("login status = %d", s)
+	}
+
+	if s := sendJSON(t, client, http.MethodPut, srv.URL+"/api/s3/photos", nil); s != http.StatusOK {
+		t.Fatalf("create bucket status = %d, want 200", s)
+	}
+
+	// Upload a small object through the bridge.
+	payload := []byte("meow, the cat says")
+	if _, s := sendRaw(t, client, http.MethodPut, srv.URL+"/api/s3/photos/cat.txt", payload); s != http.StatusOK {
+		t.Fatalf("upload object status = %d, want 200", s)
+	}
+
+	// Download it and confirm the bytes round-trip.
+	body, status := sendRaw(t, client, http.MethodGet, srv.URL+"/api/s3/photos/cat.txt", nil)
+	if status != http.StatusOK {
+		t.Fatalf("download status = %d, want 200", status)
+	}
+	if body != string(payload) {
+		t.Errorf("downloaded body = %q, want %q", body, payload)
+	}
+
+	// Delete it, then confirm a fetch is a 404.
+	if _, s := sendRaw(t, client, http.MethodDelete, srv.URL+"/api/s3/photos/cat.txt", nil); s != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want 204", s)
+	}
+	if _, s := sendRaw(t, client, http.MethodGet, srv.URL+"/api/s3/photos/cat.txt", nil); s != http.StatusNotFound {
+		t.Errorf("get after delete status = %d, want 404", s)
+	}
+}
+
 // TestBuildConsoleS3BridgeAbsentWithoutHandler confirms the S3 bridge route is not
 // registered when no S3 handler is wired: the call falls through to the SPA shell
 // (200 HTML) rather than reaching a nil handler.
@@ -370,6 +420,28 @@ func sendJSON(t *testing.T, c *http.Client, method, url string, body []byte) int
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return resp.StatusCode
+}
+
+// sendRaw sends a request with a raw body (no JSON content type, as the S3 bridge
+// expects) and returns the response body and status. A nil body is a bodyless call.
+func sendRaw(t *testing.T, c *http.Client, method, url string, body []byte) (string, int) {
+	t.Helper()
+	var r io.Reader
+	if body != nil {
+		r = bytes.NewReader(body)
+	}
+	req, err := http.NewRequest(method, url, r)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("X-Liteio-Console", "1")
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return string(b), resp.StatusCode
 }
 
 func mustJSON(t testing.TB, v any) []byte {

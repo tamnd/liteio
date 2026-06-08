@@ -146,14 +146,22 @@ function renderSets(info) {
     <p class="muted">* capacity is partial: not every drive reported.</p>`;
 }
 
+// maxUpload caps a console upload. The signed bridge buffers and hashes the whole
+// body for a single-shot signature (it does not do chunked payload signing), so the
+// console uploads small objects only; larger/streaming uploads are a planned feature.
+const maxUpload = 1024 * 1024;
+
 // s3 calls the S3 bridge. Unlike api() it does not send a JSON content type (S3
-// speaks XML) and returns the raw Response so callers can read text or status.
-async function s3(method, path) {
-  return fetch("/api/s3" + path, {
+// speaks XML) and returns the raw Response so callers can read text, a blob, or a
+// status. An optional body (a Blob or ArrayBuffer) rides a PUT through the bridge.
+async function s3(method, path, body) {
+  const opts = {
     method,
     headers: { "X-Liteio-Console": "1" },
     credentials: "same-origin",
-  });
+  };
+  if (body !== undefined) opts.body = body;
+  return fetch("/api/s3" + path, opts);
 }
 
 // parseXML turns an S3 XML response body into a Document for querying.
@@ -218,7 +226,8 @@ async function createBucket(name) {
 }
 
 // loadObjects lists the objects in a bucket (ListObjectsV2, top level) and renders
-// them with a back link to the bucket list.
+// them with an upload control, per-object download and delete actions, and a back
+// link to the bucket list.
 async function loadObjects(bucket) {
   const el = document.getElementById("view");
   const r = await s3("GET", "/" + encodeURIComponent(bucket) + "?list-type=2");
@@ -238,15 +247,92 @@ async function loadObjects(bucket) {
       <td>${esc(o.key)}</td>
       <td>${bytes(o.size)}</td>
       <td class="muted">${esc(o.modified)}</td>
+      <td class="actions">
+        <button class="link get" data-key="${esc(o.key)}">Download</button>
+        <button class="link del" data-key="${esc(o.key)}">Delete</button>
+      </td>
     </tr>`).join("");
   el.innerHTML = `
     <div class="topbar">
       <h2>${esc(bucket)}</h2>
       <button class="link" id="back">Back to buckets</button>
     </div>
-    ${objects.length ? `<table class="sets"><thead><tr><th>Key</th><th>Size</th><th>Modified</th></tr></thead><tbody>${rows}</tbody></table>`
+    <form id="upload"><input type="file" id="ufile" /><button type="submit">Upload</button></form>
+    <div class="error" id="object-error"></div>
+    ${objects.length ? `<table class="sets"><thead><tr><th>Key</th><th>Size</th><th>Modified</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
       : `<p class="muted">This bucket is empty.</p>`}`;
   document.getElementById("back").addEventListener("click", loadBuckets);
+  document.getElementById("upload").addEventListener("submit", (e) => {
+    e.preventDefault();
+    uploadObject(bucket, document.getElementById("ufile").files[0]);
+  });
+  for (const b of document.querySelectorAll("button.get")) {
+    b.addEventListener("click", () => downloadObject(bucket, b.dataset.key));
+  }
+  for (const b of document.querySelectorAll("button.del")) {
+    b.addEventListener("click", () => deleteObject(bucket, b.dataset.key));
+  }
+}
+
+// objectPath joins a bucket and key into the bridge path, escaping each segment of
+// the key independently so a slash in the key stays a path separator.
+function objectPath(bucket, key) {
+  const k = key.split("/").map(encodeURIComponent).join("/");
+  return "/" + encodeURIComponent(bucket) + "/" + k;
+}
+
+// uploadObject PUTs a chosen file into the bucket through the S3 bridge, then
+// refreshes the listing. The bridge buffers and signs the whole body, so the upload
+// is capped at maxUpload; a larger file is refused with a clear message rather than a
+// confusing bridge error.
+async function uploadObject(bucket, file) {
+  const err = document.getElementById("object-error");
+  if (!file) {
+    err.textContent = "Choose a file to upload.";
+    return;
+  }
+  if (file.size > maxUpload) {
+    err.textContent = `File is too large for the console uploader (${bytes(maxUpload)} limit). Large uploads are a planned feature.`;
+    return;
+  }
+  const r = await s3("PUT", objectPath(bucket, file.name), file);
+  if (!r.ok) {
+    err.textContent = `Upload failed (${r.status}).`;
+    return;
+  }
+  loadObjects(bucket);
+}
+
+// downloadObject fetches an object through the bridge and hands it to the browser as
+// a file download. The bridge requires the CSRF header, so a plain link will not do;
+// the body comes back as a blob the page turns into a temporary object URL.
+async function downloadObject(bucket, key) {
+  const err = document.getElementById("object-error");
+  const r = await s3("GET", objectPath(bucket, key));
+  if (!r.ok) {
+    err.textContent = `Download failed (${r.status}).`;
+    return;
+  }
+  const url = URL.createObjectURL(await r.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = key.split("/").pop();
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// deleteObject removes an object through the bridge, then refreshes the listing. A
+// failed delete shows the S3 status rather than silently doing nothing.
+async function deleteObject(bucket, key) {
+  const err = document.getElementById("object-error");
+  const r = await s3("DELETE", objectPath(bucket, key));
+  if (!r.ok) {
+    err.textContent = `Delete failed (${r.status}).`;
+    return;
+  }
+  loadObjects(bucket);
 }
 
 // bytes formats a byte count in binary units (KiB, MiB, ...) for the dashboard.
