@@ -94,6 +94,7 @@ func (s *Server) detachUserPolicy(w http.ResponseWriter, r *http.Request) {
 type groupInfo struct {
 	Name     string   `json:"name"`
 	Policies []string `json:"policies,omitempty"`
+	Members  []string `json:"members,omitempty"`
 }
 
 type createGroupRequest struct {
@@ -122,7 +123,14 @@ func (s *Server) getGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "NotFound", "no such group")
 		return
 	}
-	writeJSON(w, http.StatusOK, groupInfo{Name: g.Name, Policies: g.Policies})
+	// Members live on the users, so listing them is a separate lookup; the console's
+	// group detail panel needs them alongside the group's own attributes.
+	members, err := s.iam.GroupMembers(g.Name)
+	if err != nil {
+		writeIAMError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, groupInfo{Name: g.Name, Policies: g.Policies, Members: members})
 }
 
 func (s *Server) deleteGroup(w http.ResponseWriter, r *http.Request) {

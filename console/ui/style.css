@@ -51,6 +51,7 @@ td.actions { white-space: nowrap; }
 td.actions button { margin: 0 0.5rem 0 0; }
 td.actions button.del { color: #c0392b; }
 h3 { font-size: 1rem; margin: 1.25rem 0 0.5rem; }
+h4 { font-size: 0.9rem; margin: 1rem 0 0.4rem; color: #555; }
 .iam-form { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin: 0.5rem 0; }
 .iam-form input, .iam-form select { padding: 0.45rem 0.6rem; border: 1px solid var(--border); border-radius: 6px; font: inherit; }
 .iam-form button { margin: 0; padding: 0.45rem 0.9rem; }

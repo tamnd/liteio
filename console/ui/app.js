@@ -354,6 +354,7 @@ async function loadIdentity() {
   }
   const users = (await ur.json()).users ?? [];
   const policies = (await (await api("GET", "/api/admin/policies")).json()).policies ?? [];
+  const groups = (await (await api("GET", "/api/admin/groups")).json()).groups ?? [];
   const userRows = users.map((u) => `<tr>
       <td><button class="link user" data-key="${esc(u)}">${esc(u)}</button></td>
       <td class="actions"><button class="link del-user" data-key="${esc(u)}">Delete</button></td>
@@ -361,6 +362,10 @@ async function loadIdentity() {
   const policyRows = policies.map((p) => `<tr>
       <td><button class="link policy" data-name="${esc(p)}">${esc(p)}</button></td>
       <td class="actions"><button class="link del-policy" data-name="${esc(p)}">Delete</button></td>
+    </tr>`).join("");
+  const groupRows = groups.map((g) => `<tr>
+      <td><button class="link group" data-name="${esc(g)}">${esc(g)}</button></td>
+      <td class="actions"><button class="link del-group" data-name="${esc(g)}">Delete</button></td>
     </tr>`).join("");
   el.innerHTML = `
     <h2>Users</h2>
@@ -380,7 +385,16 @@ async function loadIdentity() {
     </form>
     <div class="error" id="policy-error"></div>
     ${policies.length ? `<table class="sets"><tbody>${policyRows}</tbody></table>` : `<p class="muted">No policies.</p>`}
-    <div id="policy-detail"></div>`;
+    <div id="policy-detail"></div>
+    <h2>Groups</h2>
+    <form id="mkgroup" class="iam-form">
+      <input id="gname" placeholder="group name" />
+      <input id="gpolicies" placeholder="policies (comma-separated)" />
+      <button type="submit">Create</button>
+    </form>
+    <div class="error" id="group-error"></div>
+    ${groups.length ? `<table class="sets"><tbody>${groupRows}</tbody></table>` : `<p class="muted">No groups.</p>`}
+    <div id="group-detail"></div>`;
 
   document.getElementById("mkuser").addEventListener("submit", (e) => {
     e.preventDefault();
@@ -403,6 +417,17 @@ async function loadIdentity() {
   }
   for (const b of document.querySelectorAll("button.del-policy")) {
     b.addEventListener("click", () => deletePolicy(b.dataset.name));
+  }
+  document.getElementById("mkgroup").addEventListener("submit", (e) => {
+    e.preventDefault();
+    createGroup(document.getElementById("gname").value.trim(),
+      document.getElementById("gpolicies").value);
+  });
+  for (const b of document.querySelectorAll("button.group")) {
+    b.addEventListener("click", () => showGroup(b.dataset.name));
+  }
+  for (const b of document.querySelectorAll("button.del-group")) {
+    b.addEventListener("click", () => deleteGroup(b.dataset.name));
   }
 }
 
@@ -457,7 +482,9 @@ async function showUser(accessKey, allPolicies) {
     <p class="muted">Groups: ${(u.groups ?? []).map(esc).join(", ") || "none"}</p>
     <ul class="attached">${detachable || "<li class=\"muted\">No policies attached.</li>"}</ul>
     <form id="attach"><select id="apolicy">${options}</select><button type="submit">Attach</button></form>
-    <div class="error" id="attach-error"></div>`;
+    <div class="error" id="attach-error"></div>
+    <h4>Service accounts</h4>
+    <div id="svcaccts"><p class="muted">Loading...</p></div>`;
   document.getElementById("attach").addEventListener("submit", (e) => {
     e.preventDefault();
     attachPolicy(accessKey, document.getElementById("apolicy").value, allPolicies);
@@ -465,6 +492,67 @@ async function showUser(accessKey, allPolicies) {
   for (const b of document.querySelectorAll("button.detach")) {
     b.addEventListener("click", () => detachPolicy(accessKey, b.dataset.policy, allPolicies));
   }
+  loadServiceAccounts(accessKey, allPolicies);
+}
+
+// loadServiceAccounts lists the service accounts whose parent is the given user and
+// renders a create form and per-account delete. Listing is keyed by parent user, so
+// it lives inside the user detail panel rather than as a top-level section.
+async function loadServiceAccounts(parent, allPolicies) {
+  const box = document.getElementById("svcaccts");
+  const r = await api("GET", "/api/admin/service-accounts?user=" + encodeURIComponent(parent));
+  if (!r.ok) {
+    box.innerHTML = `<p class="error">Could not load service accounts (${r.status}).</p>`;
+    return;
+  }
+  const keys = (await r.json()).serviceAccounts ?? [];
+  const items = keys.map((k) => `<li>${esc(k)}
+      <button class="link del-svc" data-key="${esc(k)}">delete</button></li>`).join("");
+  box.innerHTML = `
+    <ul class="attached">${items || "<li class=\"muted\">None.</li>"}</ul>
+    <form id="mksvc" class="iam-form">
+      <input id="svckey" placeholder="access key" />
+      <input id="svcsecret" type="password" placeholder="secret key" />
+      <button type="submit">Create</button>
+    </form>
+    <div class="error" id="svc-error"></div>`;
+  document.getElementById("mksvc").addEventListener("submit", (e) => {
+    e.preventDefault();
+    createServiceAccount(parent,
+      document.getElementById("svckey").value.trim(),
+      document.getElementById("svcsecret").value, allPolicies);
+  });
+  for (const b of document.querySelectorAll("button.del-svc")) {
+    b.addEventListener("click", () => deleteServiceAccount(parent, b.dataset.key, allPolicies));
+  }
+}
+
+// createServiceAccount creates a service account under a parent user. Omitting an
+// inline policy gives it the parent's full rights, which is the common case.
+async function createServiceAccount(parent, accessKey, secretKey, allPolicies) {
+  const err = document.getElementById("svc-error");
+  if (!accessKey || !secretKey) {
+    err.textContent = "Access key and secret key are required.";
+    return;
+  }
+  const r = await api("PUT", "/api/admin/service-accounts",
+    { accessKey, secretKey, parentUser: parent });
+  if (!r.ok) {
+    err.textContent = `Create failed (${r.status}).`;
+    return;
+  }
+  showUser(parent, allPolicies);
+}
+
+// deleteServiceAccount removes a service account, then re-renders the user panel.
+async function deleteServiceAccount(parent, accessKey, allPolicies) {
+  const err = document.getElementById("svc-error");
+  const r = await api("DELETE", "/api/admin/service-accounts/" + encodeURIComponent(accessKey));
+  if (!r.ok) {
+    err.textContent = `Delete failed (${r.status}).`;
+    return;
+  }
+  showUser(parent, allPolicies);
 }
 
 // attachPolicy attaches a policy to a user, then re-renders the user panel.
@@ -558,6 +646,87 @@ async function deletePolicy(name) {
     return;
   }
   loadIdentity();
+}
+
+// createGroup creates a group with an initial policy set through the admin bridge.
+async function createGroup(name, policiesCSV) {
+  const err = document.getElementById("group-error");
+  if (!name) {
+    err.textContent = "Enter a group name.";
+    return;
+  }
+  const r = await api("PUT", "/api/admin/groups/" + encodeURIComponent(name),
+    { policies: splitList(policiesCSV) });
+  if (!r.ok) {
+    err.textContent = `Create failed (${r.status}).`;
+    return;
+  }
+  loadIdentity();
+}
+
+// deleteGroup removes a group through the admin bridge (the store drops it from every
+// member's membership).
+async function deleteGroup(name) {
+  const err = document.getElementById("group-error");
+  const r = await api("DELETE", "/api/admin/groups/" + encodeURIComponent(name));
+  if (!r.ok) {
+    err.textContent = `Delete failed (${r.status}).`;
+    return;
+  }
+  loadIdentity();
+}
+
+// showGroup fetches a group's policies and members and renders an add/remove-member
+// panel below the group table.
+async function showGroup(name) {
+  const panel = document.getElementById("group-detail");
+  const r = await api("GET", "/api/admin/groups/" + encodeURIComponent(name));
+  if (!r.ok) {
+    panel.innerHTML = `<p class="error">Could not load group ${esc(name)} (${r.status}).</p>`;
+    return;
+  }
+  const g = await r.json();
+  const members = (g.members ?? []).map((m) => `<li>${esc(m)}
+      <button class="link drop-member" data-key="${esc(m)}">remove</button></li>`).join("");
+  panel.innerHTML = `
+    <h3>${esc(name)}</h3>
+    <p class="muted">Policies: ${(g.policies ?? []).map(esc).join(", ") || "none"}</p>
+    <ul class="attached">${members || "<li class=\"muted\">No members.</li>"}</ul>
+    <form id="addmember"><input id="memberkey" placeholder="user access key" /><button type="submit">Add member</button></form>
+    <div class="error" id="member-error"></div>`;
+  document.getElementById("addmember").addEventListener("submit", (e) => {
+    e.preventDefault();
+    addMember(name, document.getElementById("memberkey").value.trim());
+  });
+  for (const b of document.querySelectorAll("button.drop-member")) {
+    b.addEventListener("click", () => removeMember(name, b.dataset.key));
+  }
+}
+
+// addMember adds a user to a group, then re-renders the group panel.
+async function addMember(group, key) {
+  const err = document.getElementById("member-error");
+  if (!key) {
+    err.textContent = "Enter a user access key.";
+    return;
+  }
+  const r = await api("PUT", `/api/admin/groups/${encodeURIComponent(group)}/members/${encodeURIComponent(key)}`);
+  if (!r.ok) {
+    err.textContent = `Add failed (${r.status}).`;
+    return;
+  }
+  showGroup(group);
+}
+
+// removeMember removes a user from a group, then re-renders the group panel.
+async function removeMember(group, key) {
+  const err = document.getElementById("member-error");
+  const r = await api("DELETE", `/api/admin/groups/${encodeURIComponent(group)}/members/${encodeURIComponent(key)}`);
+  if (!r.ok) {
+    err.textContent = `Remove failed (${r.status}).`;
+    return;
+  }
+  showGroup(group);
 }
 
 // bytes formats a byte count in binary units (KiB, MiB, ...) for the dashboard.

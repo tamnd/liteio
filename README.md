@@ -195,6 +195,7 @@ the living source of truth and is updated as milestones land.
 | Console bucket browser (signed in-process S3 bridge, bucket list/create, object browse) | implemented (M5) |
 | Console object actions (upload small objects, download, delete) | implemented (M5) |
 | Console identity management (users, policies, attach/detach over the admin API) | implemented (M5) |
+| Console groups and service accounts (members, per-user service accounts) | implemented (M5) |
 | Lifecycle / encryption / object lock | planned (M6) |
 | Replication / tiering / events | planned (M7) |
 | Rebalance / decommission | planned (M8) |
