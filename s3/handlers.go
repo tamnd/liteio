@@ -494,6 +494,7 @@ func (s *Server) getObject(w http.ResponseWriter, r *http.Request, requestID, bu
 	writeObjectHeaders(w, info)
 	setSSECResponseHeaders(w, info.UserDefined)
 	setSSES3ResponseHeaders(w, info.UserDefined)
+	s.addCORSHeaders(w, r, bucket)
 	if rng != nil {
 		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
 		w.Header().Set("Content-Range", contentRange(start, length, info.Size))
@@ -529,6 +530,7 @@ func (s *Server) headObject(w http.ResponseWriter, r *http.Request, requestID, b
 	}
 
 	writeObjectHeaders(w, info)
+	s.addCORSHeaders(w, r, bucket)
 	if rng != nil {
 		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
 		w.Header().Set("Content-Range", contentRange(start, length, info.Size))
