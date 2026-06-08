@@ -94,6 +94,18 @@ func (e *counterCollector) writeTo(w *textWriter) {
 	w.sample(e.name, nil, nil, e.c.Get())
 }
 
+// counterFuncCollector writes a single counter whose value is read from get at scrape
+// time, so a CounterFunc reports a total the source owns.
+type counterFuncCollector struct {
+	name, help string
+	get        func() float64
+}
+
+func (e *counterFuncCollector) writeTo(w *textWriter) {
+	w.header(e.name, e.help, "counter")
+	w.sample(e.name, nil, nil, e.get())
+}
+
 // gaugeCollector writes a single gauge (its value read from get, so it also serves a
 // GaugeFunc).
 type gaugeCollector struct {

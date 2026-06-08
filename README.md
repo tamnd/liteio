@@ -122,7 +122,9 @@ Set `--metrics-token` (or `LITEIO_METRICS_TOKEN`) to expose Prometheus metrics a
 `/metrics` on the console port. A scraper presents the token as a bearer
 credential; with no token configured the endpoint is not served at all. The
 metrics cover per-API request counts, errors by S3 code, request latency
-histograms, in-flight requests, and bytes in and out.
+histograms, in-flight requests, and bytes in and out, alongside cluster capacity
+and health gauges: drives online, erasure sets degraded or below read quorum, raw
+and usable bytes, and the reactive-heal queue.
 
 ### Running a distributed node
 
@@ -203,6 +205,7 @@ the living source of truth and is updated as milestones land.
 | Console streaming upload (unbuffered PUT, unsigned-payload signing, no size cap) | implemented (M5) |
 | Metrics registry (dependency-free Prometheus exposition: counters, gauges, histograms) | implemented (M5) |
 | S3 request metrics and token-gated Prometheus `/metrics` endpoint (per-API counts, errors by code, latency, throughput) | implemented (M5) |
+| Cluster capacity and health metrics (drives online, sets below quorum, raw/usable bytes, reactive-heal queue) | implemented (M5) |
 | Console identity management (users, policies, attach/detach over the admin API) | implemented (M5) |
 | Console groups and service accounts (members, per-user service accounts) | implemented (M5) |
 | Lifecycle / encryption / object lock | planned (M6) |

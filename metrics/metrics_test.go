@@ -85,6 +85,28 @@ func TestGaugeFunc(t *testing.T) {
 	}
 }
 
+func TestCounterFunc(t *testing.T) {
+	r := NewRegistry()
+	calls := 0
+	r.NewCounterFunc("liteio_heal_dropped_total", "Dropped heal tasks.", func() float64 {
+		calls++
+		return 12
+	})
+	_ = render(t, r)
+	if calls != 1 {
+		t.Fatalf("counter func called %d times, want once per scrape", calls)
+	}
+	out := render(t, r)
+	for _, w := range []string{
+		"# TYPE liteio_heal_dropped_total counter",
+		"liteio_heal_dropped_total 12",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("output missing %q\n%s", w, out)
+		}
+	}
+}
+
 func TestCounterVec(t *testing.T) {
 	r := NewRegistry()
 	cv := r.NewCounterVec("liteio_api_requests_total", "Requests by API and method.", []string{"api", "method"})
