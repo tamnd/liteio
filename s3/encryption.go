@@ -79,9 +79,9 @@ func setSSES3ResponseHeaders(w http.ResponseWriter, meta map[string]string) {
 // serverSideEncryptionConfigurationXML is the S3 wire type for
 // GET/PUT /bucket?encryption.
 type serverSideEncryptionConfigurationXML struct {
-	XMLName xml.Name             `xml:"ServerSideEncryptionConfiguration"`
-	XMLNS   string               `xml:"xmlns,attr,omitempty"`
-	Rules   []encryptionRuleXML  `xml:"Rule"`
+	XMLName xml.Name            `xml:"ServerSideEncryptionConfiguration"`
+	XMLNS   string              `xml:"xmlns,attr,omitempty"`
+	Rules   []encryptionRuleXML `xml:"Rule"`
 }
 
 type encryptionRuleXML struct {
