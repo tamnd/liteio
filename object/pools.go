@@ -11,7 +11,6 @@ import (
 
 	"github.com/tamnd/liteio/cluster/lock"
 	"github.com/tamnd/liteio/event"
-	"github.com/tamnd/liteio/object/placement"
 	"github.com/tamnd/liteio/storage"
 	"github.com/tamnd/liteio/tier"
 )
@@ -82,6 +81,13 @@ type ServerPools struct {
 	// tierMu guards tierClients.
 	tierMu      sync.RWMutex
 	tierClients map[string]tier.RemoteClient // keyed by tier name
+
+	// Rebalance and decommission state.
+	rbSt     rbState          // counters for the cluster-wide rebalance walk
+	dcMu     sync.RWMutex     // guards dcState and draining
+	dcState  map[int]*rbState // per-pool decommission state
+	draining map[int]bool     // pools marked as draining (excluded from routing)
+	fc       *poolFreeCache   // per-pool free-space cache (refreshed every 30 s)
 }
 
 // CacheNotifier carries a node's local metacache events to its peers so listings
@@ -149,6 +155,9 @@ func NewServerPools(deploymentID [16]byte, pools []PoolConfig, opts ...Option) (
 		nodeID:       "local",
 		nsLockers:    []lock.Locker{lock.NewLocalLocker("local")},
 		tierClients:  make(map[string]tier.RemoteClient),
+		dcState:      make(map[int]*rbState),
+		draining:     make(map[int]bool),
+		fc:           newPoolFreeCache(),
 	}
 	for _, pc := range pools {
 		if len(pc.Sets) == 0 {
@@ -234,18 +243,11 @@ func NewSingleSet(deploymentID [16]byte, drives []storage.StorageAPI, parity int
 	return NewServerPools(deploymentID, []PoolConfig{{Sets: []SetConfig{{Drives: drives, Parity: parity}}}}, opts...)
 }
 
-// route returns the erasure set that owns object. Pool selection is free-space
-// weighted (flat until live free-space reporting lands); set selection is the
-// deployment-keyed SipHash from placement.
+// route returns the erasure set that owns object using free-space-weighted pool
+// selection. The free-space data is read from a 30 s cache populated by poolFreeInfo;
+// draining pools are excluded so they receive no new writes.
 func (sp *ServerPools) route(object string) *erasureSet {
-	poolFree := make([]placement.PoolFreeInfo, len(sp.pools))
-	for i := range sp.pools {
-		poolFree[i] = placement.PoolFreeInfo{Index: i, Free: 1}
-	}
-	pi := placement.PoolIndex(object, poolFree)
-	p := sp.pools[pi]
-	si := placement.SetIndex(object, sp.deploymentID, len(p.sets))
-	return p.sets[si]
+	return sp.routeWithFree(context.Background(), object)
 }
 
 // allSets returns every set across every pool.
