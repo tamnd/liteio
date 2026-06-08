@@ -142,6 +142,106 @@ func sessionCreds(t *testing.T, res result) auth.Credentials {
 	return auth.Credentials{AccessKey: c.AccessKeyID, SecretKey: c.SecretAccessKey}
 }
 
+// sessionVHarness wires the front door with X-Amz-Security-Token validation on, the
+// production shape for a deployment that issues temporary credentials. It is kept
+// apart from newSTSHarness because the token binding is what these tests exercise:
+// the shared harness verifies issuance and authorization, this one the second half
+// of a temporary credential.
+type sessionVHarness struct {
+	t     *testing.T
+	srv   *httptest.Server
+	store *auth.Store
+}
+
+func newSessionVHarness(t *testing.T) *sessionVHarness {
+	t.Helper()
+	drives := make([]storage.StorageAPI, 6)
+	for i := range drives {
+		d, err := local.New(t.TempDir())
+		if err != nil {
+			t.Fatalf("local.New: %v", err)
+		}
+		drives[i] = d
+	}
+	layer, err := object.NewSingleSet([16]byte{7, 7, 7}, drives, 2)
+	if err != nil {
+		t.Fatalf("NewSingleSet: %v", err)
+	}
+	store := auth.NewStore(testCreds.AccessKey, testCreds.SecretKey)
+	server := NewServer(layer, store,
+		WithAuthorizer(store),
+		WithSessionValidator(store),
+		WithClock(func() time.Time { return time.Now().UTC() }))
+	srv := httptest.NewServer(server)
+	t.Cleanup(srv.Close)
+	return &sessionVHarness{t: t, srv: srv, store: store}
+}
+
+// doToken signs a GET as c and, when token is non-empty, presents it as the
+// X-Amz-Security-Token header. The header is set before signing, so SigV4 covers it
+// the way a real client's request does.
+func (h *sessionVHarness) doToken(c auth.Credentials, token, path string) result {
+	h.t.Helper()
+	req, err := http.NewRequest(http.MethodGet, h.srv.URL+path, nil)
+	if err != nil {
+		h.t.Fatalf("new request: %v", err)
+	}
+	if token != "" {
+		req.Header.Set("X-Amz-Security-Token", token)
+	}
+	sign.SignHeader(req, c, "us-east-1", sign.EmptyPayloadHash, time.Now().UTC())
+	resp, err := h.srv.Client().Do(req)
+	if err != nil {
+		h.t.Fatalf("do GET %s: %v", path, err)
+	}
+	defer resp.Body.Close()
+	rb, _ := io.ReadAll(resp.Body)
+	return result{status: resp.StatusCode, header: resp.Header, body: rb}
+}
+
+func TestSecurityTokenValidation(t *testing.T) {
+	h := newSessionVHarness(t)
+	sess, err := h.store.AssumeRole(testCreds.AccessKey, nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc := auth.Credentials{AccessKey: sess.AccessKey, SecretKey: sess.SecretKey}
+
+	// The session lists buckets only when it presents its matching token.
+	mustStatus(t, h.doToken(sc, sess.SessionToken, "/"), http.StatusOK)
+	// No token is half a credential; a wrong token names another session. Both 403.
+	mustStatus(t, h.doToken(sc, "", "/"), http.StatusForbidden)
+	mustStatus(t, h.doToken(sc, "wrong", "/"), http.StatusForbidden)
+
+	// The long-lived root key works with no token and is refused carrying a stray one,
+	// so a token can never be smuggled onto a permanent credential.
+	mustStatus(t, h.doToken(testCreds, "", "/"), http.StatusOK)
+	mustStatus(t, h.doToken(testCreds, "stray", "/"), http.StatusForbidden)
+
+	// A revoked session's credential is dead even with the once-valid token.
+	if err := h.store.RevokeSession(sess.AccessKey); err != nil {
+		t.Fatal(err)
+	}
+	mustStatus(t, h.doToken(sc, sess.SessionToken, "/"), http.StatusForbidden)
+}
+
+func TestSecurityTokenSource(t *testing.T) {
+	// Header wins, query is the presigned-URL fallback, neither means none.
+	hdr, _ := http.NewRequest(http.MethodGet, "http://h/?X-Amz-Security-Token=q", nil)
+	hdr.Header.Set("X-Amz-Security-Token", "h")
+	if got := securityToken(hdr); got != "h" {
+		t.Fatalf("header token = %q, want %q", got, "h")
+	}
+	q, _ := http.NewRequest(http.MethodGet, "http://h/?X-Amz-Security-Token=q", nil)
+	if got := securityToken(q); got != "q" {
+		t.Fatalf("query token = %q, want %q", got, "q")
+	}
+	none, _ := http.NewRequest(http.MethodGet, "http://h/", nil)
+	if got := securityToken(none); got != "" {
+		t.Fatalf("no token = %q, want empty", got)
+	}
+}
+
 func TestAssumeRoleSessionCanSign(t *testing.T) {
 	h := newSTSHarness(t)
 	// Root assumes a role; the resulting session inherits root and can list buckets.

@@ -27,13 +27,30 @@ func (d *decodedBody) Close() error { return d.closer.Close() }
 // resolves the bucket/object from the URL (path-style or virtual-host), and
 // dispatches to the handler that calls the object layer.
 type Server struct {
-	layer  object.ObjectLayer
-	creds  auth.CredentialStore
-	authz  Authorizer       // policy decision (nil authenticates only)
-	sts    STSIssuer        // temporary-credential issuer (nil disables the STS endpoint)
-	domain string           // virtual-host base domain ("" disables vhost)
-	now    func() time.Time // clock seam for signature skew (tests inject)
+	layer    object.ObjectLayer
+	creds    auth.CredentialStore
+	authz    Authorizer       // policy decision (nil authenticates only)
+	sts      STSIssuer        // temporary-credential issuer (nil disables the STS endpoint)
+	sessions SessionValidator // X-Amz-Security-Token check (nil skips it)
+	domain   string           // virtual-host base domain ("" disables vhost)
+	now      func() time.Time // clock seam for signature skew (tests inject)
 }
+
+// SessionValidator checks the X-Amz-Security-Token a request presents against the
+// access key its signature verified under (auth.Store satisfies it). It is the seam
+// the front door consults after SigV4 authentication: a temporary credential must
+// carry the token it was issued with, a long-lived one must not carry a token at
+// all, and an expired session is refused here. A nil error admits the request.
+type SessionValidator interface {
+	ValidateSession(accessKey, token string) error
+}
+
+// WithSessionValidator turns on X-Amz-Security-Token validation: every
+// signature-verified request has its presented token (header or presigned query)
+// checked against the credential it signed under. Without it the server trusts the
+// signature alone, which is correct only for a deployment that never issues
+// temporary credentials.
+func WithSessionValidator(v SessionValidator) Option { return func(s *Server) { s.sessions = v } }
 
 // Option configures a Server.
 type Option func(*Server)
@@ -76,6 +93,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, requestID, r.URL.Path, APIError{Code: serr.Code, Description: serr.Message, HTTPStatus: signStatus(serr.Code)})
 		return
+	}
+	// The signature verified the caller holds the secret key; if the credential is a
+	// temporary session, also bind the request to its X-Amz-Security-Token. This runs
+	// before STS and the action gate so a session must present its token whatever the
+	// operation, and so an expired session is refused even with no authorizer wired.
+	if s.sessions != nil {
+		if err := s.sessions.ValidateSession(vr.AccessKey, securityToken(r)); err != nil {
+			writeError(w, requestID, r.URL.Path, errAccessDenied)
+			return
+		}
 	}
 	// For an aws-chunked upload, hand handlers a reader over the decoded object
 	// bytes (with verified chunk signatures) and the real content length.
@@ -237,6 +264,16 @@ func (s *Server) serveObject(w http.ResponseWriter, r *http.Request, requestID, 
 	default:
 		writeError(w, requestID, r.URL.Path, errMethodNotAllowed)
 	}
+}
+
+// securityToken returns the X-Amz-Security-Token a request presents. A header-signed
+// request carries it in the header; a presigned URL carries it as a query parameter,
+// where it is part of the signed query string. The empty string means none was sent.
+func securityToken(r *http.Request) string {
+	if t := r.Header.Get("X-Amz-Security-Token"); t != "" {
+		return t
+	}
+	return r.URL.Query().Get("X-Amz-Security-Token")
 }
 
 // signStatus maps a SigV4 error code to its HTTP status.

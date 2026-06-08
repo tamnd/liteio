@@ -181,6 +181,7 @@ the living source of truth and is updated as milestones land.
 | OIDC web identity federation (AssumeRoleWithWebIdentity, JWT/JWKS, federated sessions) | implemented (M4) |
 | Certificate federation (AssumeRoleWithCertificate, X.509 chain validation, subject-to-policy) | implemented (M4) |
 | LDAP federation (AssumeRoleWithLDAPIdentity, lookup-then-bind, groups-to-policy) | implemented (M4) |
+| Session-token binding (X-Amz-Security-Token validated per request, expiry enforced) | implemented (M4) |
 | Free web console | planned (M5) |
 | Lifecycle / encryption / object lock | planned (M6) |
 | Replication / tiering / events | planned (M7) |

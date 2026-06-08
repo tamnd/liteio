@@ -151,6 +151,63 @@ func TestValidateSessionToken(t *testing.T) {
 	}
 }
 
+func TestValidateSession(t *testing.T) {
+	s, clock := stsStore(t)
+	sess, err := s.AssumeRole("alice", nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A session credential presenting its matching token is admitted.
+	if err := s.ValidateSession(sess.AccessKey, sess.SessionToken); err != nil {
+		t.Fatalf("matching session token = %v, want nil", err)
+	}
+	// A session with no token presented is half a credential.
+	if err := s.ValidateSession(sess.AccessKey, ""); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("session with no token = %v, want ErrInvalidToken", err)
+	}
+	// A session whose token does not match is rejected as an invalid token.
+	if err := s.ValidateSession(sess.AccessKey, "wrong"); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("session with wrong token = %v, want ErrInvalidToken", err)
+	}
+
+	// A long-lived key presents no token: admitted. Carrying one: rejected, since
+	// the token names no session.
+	if err := s.ValidateSession("alice", ""); err != nil {
+		t.Fatalf("long-lived key, no token = %v, want nil", err)
+	}
+	if err := s.ValidateSession("alice", "stray"); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("long-lived key with a token = %v, want ErrInvalidToken", err)
+	}
+	if err := s.ValidateSession("root", ""); err != nil {
+		t.Fatalf("root key, no token = %v, want nil", err)
+	}
+
+	// Past expiry the matching token is refused as ErrExpired, distinct from a
+	// wrong token, so the front door can tell a stale session from a forged one.
+	*clock = sess.Expiration
+	if err := s.ValidateSession(sess.AccessKey, sess.SessionToken); !errors.Is(err, ErrExpired) {
+		t.Fatalf("expired session = %v, want ErrExpired", err)
+	}
+}
+
+func BenchmarkValidateSession(b *testing.B) {
+	s := NewStore("root", "rootsecret")
+	if err := s.AddUser(User{AccessKey: "alice", SecretKey: "s", Policies: []string{"readwrite"}}); err != nil {
+		b.Fatal(err)
+	}
+	sess, err := s.AssumeRole("alice", nil, time.Hour)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := s.ValidateSession(sess.AccessKey, sess.SessionToken); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func TestRevokeSession(t *testing.T) {
 	s, _ := stsStore(t)
 	sess, err := s.AssumeRole("alice", nil, time.Hour)
