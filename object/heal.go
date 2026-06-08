@@ -78,8 +78,11 @@ func (m *mrf) run(ctx context.Context) {
 	}
 }
 
-// MRFStats reports the reactive-heal queue's running counters.
+// MRFStats reports the reactive-heal queue's running counters plus its live depth.
+// Pending is a point-in-time read of the buffer, so it rises with a burst of partial
+// writes and falls as the worker drains them; the three totals are monotonic.
 type MRFStats struct {
+	Pending int64 // tasks waiting in the buffer right now
 	Dropped int64 // tasks discarded because the buffer was full
 	Healed  int64 // tasks healed successfully
 	Failed  int64 // tasks the worker could not heal

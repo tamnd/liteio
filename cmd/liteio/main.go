@@ -91,8 +91,12 @@ func run(argv []string) error {
 	// created through the admin API or console.
 	store := auth.NewStore(cfg.accessKey, cfg.secretKey)
 	// One registry collects the front-door metrics and is scraped through the
-	// token-gated /metrics endpoint on the console listener (doc 10.4).
+	// token-gated /metrics endpoint on the console listener (doc 10.4). When the layer
+	// is the local pools it also carries the cluster capacity and health families.
 	registry := metrics.NewRegistry()
+	if sp, ok := layer.(*object.ServerPools); ok {
+		registerClusterMetrics(registry, sp)
+	}
 	opts := []s3.Option{
 		s3.WithAuthorizer(store),
 		s3.WithSTS(store),

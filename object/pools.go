@@ -151,6 +151,7 @@ func (sp *ServerPools) StartHealing(ctx context.Context) {
 // MRFStats returns the reactive-heal queue's running counters.
 func (sp *ServerPools) MRFStats() MRFStats {
 	return MRFStats{
+		Pending: int64(len(sp.mrf.tasks)),
 		Dropped: sp.mrf.dropped.Load(),
 		Healed:  sp.mrf.healed.Load(),
 		Failed:  sp.mrf.failed.Load(),

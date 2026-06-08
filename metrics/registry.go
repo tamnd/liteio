@@ -48,6 +48,14 @@ func (r *Registry) NewCounter(name, help string) *Counter {
 	return c
 }
 
+// NewCounterFunc registers a counter whose value is read from fn at scrape time. Use
+// it for a monotonic total the object layer already keeps (heal tasks dropped, healed,
+// failed) rather than a counter this package owns, so the source stays the single
+// writer. fn must return a non-decreasing value; the registry does not enforce it.
+func (r *Registry) NewCounterFunc(name, help string, fn func() float64) {
+	r.register(name, &counterFuncCollector{name: name, help: help, get: fn})
+}
+
 // NewGauge registers and returns a plain gauge.
 func (r *Registry) NewGauge(name, help string) *Gauge {
 	g := &Gauge{}
