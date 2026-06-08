@@ -42,7 +42,7 @@ func TestTraceSSEReceivesEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("do: %v", err)
 	}
-	defer resp.Body.Close()
+	t.Cleanup(func() { resp.Body.Close() })
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
