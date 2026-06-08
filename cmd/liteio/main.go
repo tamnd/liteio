@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/tamnd/liteio/auth"
+	"github.com/tamnd/liteio/metrics"
 	"github.com/tamnd/liteio/object"
 	"github.com/tamnd/liteio/s3"
 )
@@ -65,6 +66,12 @@ type config struct {
 	consoleAddress        string
 	consoleRegion         string
 	consoleInsecureCookie bool
+
+	// metricsToken gates the Prometheus metrics endpoint (doc 10.4): when set, the
+	// console listener serves /metrics to a scraper that presents this token as a
+	// bearer credential. Empty disables the endpoint, so metrics are never exposed
+	// without an explicit token.
+	metricsToken string
 }
 
 func run(argv []string) error {
@@ -83,10 +90,14 @@ func run(argv []string) error {
 	// admin API. The store is seeded with the root credential; further users are
 	// created through the admin API or console.
 	store := auth.NewStore(cfg.accessKey, cfg.secretKey)
+	// One registry collects the front-door metrics and is scraped through the
+	// token-gated /metrics endpoint on the console listener (doc 10.4).
+	registry := metrics.NewRegistry()
 	opts := []s3.Option{
 		s3.WithAuthorizer(store),
 		s3.WithSTS(store),
 		s3.WithSessionValidator(store),
+		s3.WithMetrics(registry),
 	}
 	if cfg.domain != "" {
 		opts = append(opts, s3.WithDomain(cfg.domain))
@@ -118,7 +129,7 @@ func run(argv []string) error {
 	// expired console sessions in the background. Disabled when no address is set.
 	var consoleHTTP *http.Server
 	if cfg.consoleAddress != "" {
-		consoleHandler, csrv, cerr := buildConsole(cfg, store, layer, handler)
+		consoleHandler, csrv, cerr := buildConsole(cfg, store, layer, handler, registry)
 		if cerr != nil {
 			return cerr
 		}
@@ -199,6 +210,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.consoleAddress, "console-address", envOr("LITEIO_CONSOLE_ADDRESS", ":9001"), "listen address for the admin API and web console; empty disables them")
 	fs.StringVar(&cfg.consoleRegion, "console-region", os.Getenv("LITEIO_CONSOLE_REGION"), "region the console signs admin calls under (default: us-east-1)")
 	fs.BoolVar(&cfg.consoleInsecureCookie, "console-insecure-cookie", os.Getenv("LITEIO_CONSOLE_INSECURE_COOKIE") == "1", "drop the Secure attribute on the console cookie for plain-HTTP local testing")
+	fs.StringVar(&cfg.metricsToken, "metrics-token", os.Getenv("LITEIO_METRICS_TOKEN"), "bearer token gating the Prometheus /metrics endpoint on the console listener; empty disables it")
 	if err := fs.Parse(argv); err != nil {
 		return config{}, err
 	}

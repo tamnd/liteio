@@ -61,7 +61,7 @@ func TestParseFlagsConsoleDisabled(t *testing.T) {
 // the console app, rather than letting the console SPA fallback swallow admin URLs.
 func TestBuildConsoleComposition(t *testing.T) {
 	store := auth.NewStore("liteioadmin", "liteioadmin")
-	handler, csrv, err := buildConsole(rootCfg(), store, nil, nil)
+	handler, csrv, err := buildConsole(rootCfg(), store, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildConsole: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestBuildConsoleComposition(t *testing.T) {
 // into the admin API, confirming the wiring carries a request end to end.
 func TestBuildConsoleLoginAndBridge(t *testing.T) {
 	store := auth.NewStore("liteioadmin", "liteioadmin")
-	handler, _, err := buildConsole(rootCfg(), store, nil, nil)
+	handler, _, err := buildConsole(rootCfg(), store, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildConsole: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestBuildConsoleLoginAndBridge(t *testing.T) {
 func TestBuildConsoleInfoThroughBridge(t *testing.T) {
 	store := auth.NewStore("liteioadmin", "liteioadmin")
 	layer := newDriveLayer(t, 4, 2)
-	handler, _, err := buildConsole(rootCfg(), store, layer, nil)
+	handler, _, err := buildConsole(rootCfg(), store, layer, nil, nil)
 	if err != nil {
 		t.Fatalf("buildConsole: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestBuildConsoleS3Browse(t *testing.T) {
 	store := auth.NewStore("liteioadmin", "liteioadmin")
 	layer := newDriveLayer(t, 4, 2)
 	s3Handler := s3.NewServer(layer, store)
-	handler, _, err := buildConsole(rootCfg(), store, layer, s3Handler)
+	handler, _, err := buildConsole(rootCfg(), store, layer, s3Handler, nil)
 	if err != nil {
 		t.Fatalf("buildConsole: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestBuildConsoleS3ObjectRoundTrip(t *testing.T) {
 	store := auth.NewStore("liteioadmin", "liteioadmin")
 	layer := newDriveLayer(t, 4, 2)
 	s3Handler := s3.NewServer(layer, store)
-	handler, _, err := buildConsole(rootCfg(), store, layer, s3Handler)
+	handler, _, err := buildConsole(rootCfg(), store, layer, s3Handler, nil)
 	if err != nil {
 		t.Fatalf("buildConsole: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestBuildConsoleStreamingUpload(t *testing.T) {
 	store := auth.NewStore("liteioadmin", "liteioadmin")
 	layer := newDriveLayer(t, 4, 2)
 	s3Handler := s3.NewServer(layer, store)
-	handler, _, err := buildConsole(rootCfg(), store, layer, s3Handler)
+	handler, _, err := buildConsole(rootCfg(), store, layer, s3Handler, nil)
 	if err != nil {
 		t.Fatalf("buildConsole: %v", err)
 	}
@@ -311,7 +311,7 @@ func TestBuildConsoleStreamingUpload(t *testing.T) {
 // (200 HTML) rather than reaching a nil handler.
 func TestBuildConsoleS3BridgeAbsentWithoutHandler(t *testing.T) {
 	store := auth.NewStore("liteioadmin", "liteioadmin")
-	handler, _, err := buildConsole(rootCfg(), store, nil, nil)
+	handler, _, err := buildConsole(rootCfg(), store, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildConsole: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestBuildConsoleS3BridgeAbsentWithoutHandler(t *testing.T) {
 // attach a second policy and detach it, read the user back, then delete the user.
 func TestBuildConsoleIdentityManagement(t *testing.T) {
 	store := auth.NewStore("liteioadmin", "liteioadmin")
-	handler, _, err := buildConsole(rootCfg(), store, nil, nil)
+	handler, _, err := buildConsole(rootCfg(), store, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildConsole: %v", err)
 	}
@@ -404,7 +404,7 @@ func TestBuildConsoleIdentityManagement(t *testing.T) {
 // and create, list, and delete a service account under a parent user.
 func TestBuildConsoleGroupsAndServiceAccounts(t *testing.T) {
 	store := auth.NewStore("liteioadmin", "liteioadmin")
-	handler, _, err := buildConsole(rootCfg(), store, nil, nil)
+	handler, _, err := buildConsole(rootCfg(), store, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildConsole: %v", err)
 	}
@@ -491,7 +491,7 @@ func TestBuildConsoleNeedsAddressToServe(t *testing.T) {
 	// buildConsole itself always builds; the address gate lives in run(). A blank
 	// region and default opts must still produce a working server.
 	store := auth.NewStore("k", "s")
-	if _, _, err := buildConsole(config{}, store, nil, nil); err != nil {
+	if _, _, err := buildConsole(config{}, store, nil, nil, nil); err != nil {
 		t.Fatalf("buildConsole with zero config: %v", err)
 	}
 }
@@ -500,7 +500,7 @@ func TestBuildConsoleNeedsAddressToServe(t *testing.T) {
 // cancelled and does not panic on a freshly built console server.
 func TestStartSweepingStops(t *testing.T) {
 	store := auth.NewStore("k", "s")
-	_, csrv, err := buildConsole(rootCfg(), store, nil, nil)
+	_, csrv, err := buildConsole(rootCfg(), store, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildConsole: %v", err)
 	}
@@ -515,7 +515,7 @@ func TestStartSweepingStops(t *testing.T) {
 // pays for every view that reads from the admin API.
 func BenchmarkConsoleBridgeList(b *testing.B) {
 	store := auth.NewStore("liteioadmin", "liteioadmin")
-	handler, _, err := buildConsole(rootCfg(), store, nil, nil)
+	handler, _, err := buildConsole(rootCfg(), store, nil, nil, nil)
 	if err != nil {
 		b.Fatalf("buildConsole: %v", err)
 	}

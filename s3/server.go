@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tamnd/liteio/auth"
+	"github.com/tamnd/liteio/metrics"
 	"github.com/tamnd/liteio/object"
 	"github.com/tamnd/liteio/s3/sign"
 )
@@ -34,6 +35,7 @@ type Server struct {
 	sessions SessionValidator // X-Amz-Security-Token check (nil skips it)
 	domain   string           // virtual-host base domain ("" disables vhost)
 	now      func() time.Time // clock seam for signature skew (tests inject)
+	metrics  *metricsSet      // front-door metrics (nil disables instrumentation)
 }
 
 // SessionValidator checks the X-Amz-Security-Token a request presents against the
@@ -62,6 +64,13 @@ func WithDomain(domain string) Option { return func(s *Server) { s.domain = doma
 // WithClock overrides the clock used for signature skew checks (for tests).
 func WithClock(now func() time.Time) Option { return func(s *Server) { s.now = now } }
 
+// WithMetrics turns on front-door instrumentation, registering the S3 request metric
+// families (doc 10.4) on reg and recording every request. Without it the server is not
+// instrumented and the registry stays empty of S3 metrics.
+func WithMetrics(reg *metrics.Registry) Option {
+	return func(s *Server) { s.metrics = newMetricsSet(reg) }
+}
+
 // NewServer builds the front door over an object layer and credential store.
 func NewServer(layer object.ObjectLayer, creds auth.CredentialStore, opts ...Option) *Server {
 	s := &Server{layer: layer, creds: creds, now: time.Now}
@@ -77,8 +86,26 @@ type resource struct {
 	object string
 }
 
-// ServeHTTP implements http.Handler: authenticate, parse the resource, dispatch.
+// ServeHTTP implements http.Handler. When metrics are enabled it wraps the request to
+// record the operation, latency, status, and bytes, then serves it; otherwise it
+// serves directly with no per-request overhead.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.metrics == nil {
+		s.serve(w, r)
+		return
+	}
+	rec := newMetricsRecorder(w)
+	counter := &countingReader{r: r.Body}
+	r.Body = counter
+	s.metrics.inFlight.Inc()
+	start := s.now()
+	s.serve(rec, r)
+	s.metrics.inFlight.Dec()
+	s.metrics.observe(operationName(r, s.parseResource(r)), rec, counter.n, s.now().Sub(start).Seconds())
+}
+
+// serve authenticates, parses the resource, and dispatches the request.
+func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	requestID := newRequestID()
 	setCommonHeaders(w, requestID)
 
