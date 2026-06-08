@@ -229,6 +229,58 @@ func (s *erasureSet) versioned(ctx context.Context, bucket string) bool {
 	return s.versioningState(ctx, bucket) == "enabled"
 }
 
+// --- bucket policy -------------------------------------------------------
+
+func (s *erasureSet) policyPath() string { return path.Join(reserved, "policy") }
+
+// setBucketPolicy persists the bucket's policy document (opaque bytes, already
+// validated by the caller) on every drive in the set.
+func (s *erasureSet) setBucketPolicy(ctx context.Context, bucket string, doc []byte) error {
+	res := fanOut(ctx, len(s.drives), func(ctx context.Context, i int) (struct{}, error) {
+		return struct{}{}, s.drives[i].WriteMeta(ctx, bucket, s.policyPath(), doc)
+	})
+	if countOK(res) < s.writeQuorum() {
+		return ErrWriteQuorum
+	}
+	return nil
+}
+
+// bucketPolicy returns the stored policy document, or ErrNoSuchBucketPolicy when
+// none is configured. It reads from the first online drive carrying the file; a
+// drive that has no policy file reports ErrFileNotFound, which is the
+// no-policy-here signal, so it moves on rather than concluding absence.
+func (s *erasureSet) bucketPolicy(ctx context.Context, bucket string) ([]byte, error) {
+	for _, d := range s.drives {
+		if !d.IsOnline() {
+			continue
+		}
+		data, err := d.ReadMeta(ctx, bucket, s.policyPath())
+		if err != nil {
+			continue
+		}
+		return data, nil
+	}
+	return nil, ErrNoSuchBucketPolicy
+}
+
+// deleteBucketPolicy removes the bucket's policy document from every drive in the
+// set. WriteMeta stores the document as obj.meta inside a policyPath directory, so
+// the removal is recursive. When no policy was ever set the call is a no-op, which
+// makes it idempotent and avoids recursively deleting a path whose parent
+// directory does not exist.
+func (s *erasureSet) deleteBucketPolicy(ctx context.Context, bucket string) error {
+	if _, err := s.bucketPolicy(ctx, bucket); errors.Is(err, ErrNoSuchBucketPolicy) {
+		return nil
+	}
+	res := fanOut(ctx, len(s.drives), func(ctx context.Context, i int) (struct{}, error) {
+		return struct{}{}, s.drives[i].Delete(ctx, bucket, s.policyPath(), true)
+	})
+	if countOK(res) < s.writeQuorum() {
+		return ErrWriteQuorum
+	}
+	return nil
+}
+
 // --- write path ----------------------------------------------------------
 
 func (s *erasureSet) putObject(ctx context.Context, bucket, object string, r *PutReader, opts ObjectOptions) (ObjectInfo, error) {

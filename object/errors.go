@@ -39,4 +39,7 @@ var (
 	// ErrOperationTimedOut means the namespace lock for a mutating operation
 	// could not be acquired before the request context was done.
 	ErrOperationTimedOut = errors.New("object: operation timed out acquiring the namespace lock")
+	// ErrNoSuchBucketPolicy is returned by GetBucketPolicy when the bucket has no
+	// policy attached.
+	ErrNoSuchBucketPolicy = errors.New("object: no such bucket policy")
 )

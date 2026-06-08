@@ -58,6 +58,8 @@ var (
 	errInvalidCopySource       = APIError{"InvalidArgument", "Copy Source must mention the source bucket and key: sourcebucket/sourcekey.", http.StatusBadRequest}
 	errInvalidCopyDest         = APIError{"InvalidRequest", "This copy request is illegal because it is trying to copy an object to itself without changing the object's metadata, storage class, website redirect location or encryption attributes.", http.StatusBadRequest}
 	errMalformedXML            = APIError{"MalformedXML", "The XML you provided was not well-formed or did not validate against our published schema.", http.StatusBadRequest}
+	errMalformedPolicy         = APIError{"MalformedPolicy", "The policy is not in the valid JSON format or contains an unsupported element.", http.StatusBadRequest}
+	errNoSuchBucketPolicy      = APIError{"NoSuchBucketPolicy", "The bucket policy does not exist.", http.StatusNotFound}
 	errMissingContentLength    = APIError{"MissingContentLength", "You must provide the Content-Length HTTP header.", http.StatusBadRequest}
 	errBadDigest               = APIError{"BadDigest", "The Content-MD5 you specified did not match what we received.", http.StatusBadRequest}
 	errAccessDenied            = APIError{"AccessDenied", "Access Denied.", http.StatusForbidden}
@@ -89,6 +91,8 @@ func toAPIError(err error) APIError {
 		return errInvalidArgument
 	case errors.Is(err, object.ErrInvalidRange):
 		return errInvalidRange
+	case errors.Is(err, object.ErrNoSuchBucketPolicy):
+		return errNoSuchBucketPolicy
 	case errors.Is(err, object.ErrNoSuchUpload):
 		return errNoSuchUpload
 	case errors.Is(err, object.ErrInvalidPart):

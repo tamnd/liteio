@@ -133,6 +133,8 @@ func (s *Server) serveBucket(w http.ResponseWriter, r *http.Request, requestID, 
 			s.getBucketLocation(w, r, requestID, bucket)
 		case q.Has("versioning"):
 			s.getBucketVersioning(w, r, requestID, bucket)
+		case q.Has("policy"):
+			s.getBucketPolicy(w, r, requestID, bucket)
 		case q.Has("versions"):
 			s.listObjectVersions(w, r, requestID, bucket)
 		case q.Has("uploads"):
@@ -141,14 +143,21 @@ func (s *Server) serveBucket(w http.ResponseWriter, r *http.Request, requestID, 
 			s.listObjectsV2(w, r, requestID, bucket)
 		}
 	case http.MethodPut:
-		if q.Has("versioning") {
+		switch {
+		case q.Has("versioning"):
 			s.putBucketVersioning(w, r, requestID, bucket)
-			return
+		case q.Has("policy"):
+			s.putBucketPolicy(w, r, requestID, bucket)
+		default:
+			s.createBucket(w, r, requestID, bucket)
 		}
-		s.createBucket(w, r, requestID, bucket)
 	case http.MethodHead:
 		s.headBucket(w, r, requestID, bucket)
 	case http.MethodDelete:
+		if q.Has("policy") {
+			s.deleteBucketPolicy(w, r, requestID, bucket)
+			return
+		}
 		s.deleteBucket(w, r, requestID, bucket)
 	case http.MethodPost:
 		if q.Has("delete") {
