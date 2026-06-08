@@ -4,6 +4,7 @@ package event
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -291,6 +292,102 @@ func TestDispatcherClose(t *testing.T) {
 	}
 	d.Close()
 }
+
+// TestNewEventNamesMatchWildcard verifies the new restore and replication event
+// names match their respective wildcard prefixes.
+func TestNewEventNamesMatchWildcard(t *testing.T) {
+	tests := []struct {
+		rule  EventName
+		name  EventName
+		match bool
+	}{
+		{"s3:ObjectRestore:*", ObjectRestoreInitiated, true},
+		{"s3:ObjectRestore:*", ObjectRestoreCompleted, true},
+		{"s3:ObjectRestore:*", ObjectCreatedPut, false},
+		{"s3:Replication:*", ReplicationOperationFailed, true},
+		{"s3:Replication:*", ReplicationOperationMissedThreshold, true},
+		{"s3:Replication:*", ReplicationOperationNotTracked, true},
+		{"s3:Replication:*", ObjectCreatedPut, false},
+		{ObjectRestoreInitiated, ObjectRestoreInitiated, true},
+		{ObjectRestoreCompleted, ObjectRestoreCompleted, true},
+		{ReplicationOperationFailed, ReplicationOperationFailed, true},
+	}
+	for _, tt := range tests {
+		got := eventMatches([]EventName{tt.rule}, tt.name)
+		if got != tt.match {
+			t.Errorf("eventMatches([%s], %s) = %v, want %v", tt.rule, tt.name, got, tt.match)
+		}
+	}
+}
+
+// TestDispatchDeliversToQueueTarget registers a queue target and verifies that a
+// matching event reaches it.
+func TestDispatchDeliversToQueueTarget(t *testing.T) {
+	var mu sync.Mutex
+	var delivered []Envelope
+
+	qt := &recordingTarget{
+		deliverFn: func(env Envelope) {
+			mu.Lock()
+			delivered = append(delivered, env)
+			mu.Unlock()
+		},
+	}
+
+	d := NewDispatcher(nil)
+	d.AddQueueTarget("my-queue", qt)
+
+	cfg := NotificationConfig{
+		QueueConfigurations: []QueueConfig{
+			{
+				ID:       "my-queue",
+				QueueARN: "arn:liteio:sqs:::my-queue",
+				Events:   []EventName{"s3:ObjectCreated:*"},
+			},
+		},
+	}
+	rec := Record{
+		EventName: ObjectCreatedPut,
+		S3:        S3Entity{Bucket: BucketID{Name: "b"}, Object: ObjectID{Key: "k"}},
+	}
+	d.Dispatch(cfg, ObjectCreatedPut, "k", []Record{rec})
+
+	// Wait up to 2 seconds for delivery.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(delivered)
+		mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(delivered) == 0 {
+		t.Fatal("queue target not called within 2 seconds")
+	}
+	if len(delivered[0].Records) != 1 || delivered[0].Records[0].S3.Bucket.Name != "b" {
+		t.Errorf("unexpected envelope: %+v", delivered[0])
+	}
+	if d.Stats().QueueDelivered == 0 {
+		t.Error("QueueDelivered counter not incremented")
+	}
+}
+
+// recordingTarget is a test QueueTarget that calls deliverFn for each envelope.
+type recordingTarget struct {
+	deliverFn func(Envelope)
+}
+
+func (r *recordingTarget) Deliver(_ context.Context, env Envelope) error {
+	r.deliverFn(env)
+	return nil
+}
+
+func (r *recordingTarget) Close() error { return nil }
 
 func BenchmarkDispatch(b *testing.B) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

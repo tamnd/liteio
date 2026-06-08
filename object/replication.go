@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/tamnd/liteio/event"
 	"github.com/tamnd/liteio/object/meta"
 	"github.com/tamnd/liteio/replication"
 )
@@ -119,6 +120,11 @@ func (sp *ServerPools) replicateObject(ctx context.Context, bucket, object strin
 		putErr := client.PutObject(ctx, bucket, object, bytes.NewReader(data), int64(len(data)), userMeta, true)
 		if putErr != nil {
 			anyFailed = true
+			replication.IncReplFailed()
+			// Fire replication-failed event (best effort, non-blocking).
+			go sp.notifyPut(ctx, oi, event.ReplicationOperationFailed, "")
+		} else {
+			replication.IncReplicated()
 		}
 	}
 	status := replication.StatusComplete

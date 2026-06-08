@@ -29,15 +29,18 @@ const (
 
 // DispatchStats carries delivery counters for observability.
 type DispatchStats struct {
-	Queued  int64
-	Sent    int64
-	Dropped int64
-	Failed  int64
+	Queued         int64
+	Sent           int64
+	Dropped        int64
+	Failed         int64
+	QueueDelivered int64
+	QueueFailed    int64
 }
 
-// Dispatcher routes event records to webhook targets. Events are enqueued on the
-// write path (non-blocking) and delivered asynchronously from a worker pool. A
-// slow or unreachable target drops events (at-least-once with bounded memory).
+// Dispatcher routes event records to webhook targets and named queue targets.
+// Events are enqueued on the write path (non-blocking) and delivered
+// asynchronously from a worker pool. A slow or unreachable target drops events
+// (at-least-once with bounded memory).
 type Dispatcher struct {
 	client *http.Client
 	now    func() time.Time
@@ -45,10 +48,15 @@ type Dispatcher struct {
 	mu      sync.RWMutex
 	targets map[string]*target // keyed by URL
 
-	queued  atomicInt64
-	sent    atomicInt64
-	dropped atomicInt64
-	failed  atomicInt64
+	qmu          sync.RWMutex
+	queueTargets map[string]QueueTarget // keyed by target ID
+
+	queued         atomicInt64
+	sent           atomicInt64
+	dropped        atomicInt64
+	failed         atomicInt64
+	queueDelivered atomicInt64
+	queueFailed    atomicInt64
 }
 
 type target struct {
@@ -69,20 +77,28 @@ func NewDispatcher(client *http.Client) *Dispatcher {
 		client = &http.Client{Timeout: defaultTimeout}
 	}
 	return &Dispatcher{
-		client:  client,
-		now:     time.Now,
-		targets: make(map[string]*target),
+		client:       client,
+		now:          time.Now,
+		targets:      make(map[string]*target),
+		queueTargets: make(map[string]QueueTarget),
 	}
 }
 
-// Dispatch enqueues records for delivery to all matching webhook targets in cfg.
-// It returns immediately; delivery is asynchronous. The call is safe to make from
-// a hot write path.
+// AddQueueTarget registers a named QueueTarget. The id must match the ID (or
+// QueueARN when ID is empty) of the QueueConfiguration in the bucket notification
+// config. Replacing an existing id overwrites it (the old target is not closed).
+func (d *Dispatcher) AddQueueTarget(id string, t QueueTarget) {
+	d.qmu.Lock()
+	d.queueTargets[id] = t
+	d.qmu.Unlock()
+}
+
+// Dispatch enqueues records for delivery to all matching webhook targets in cfg,
+// and fires to all matching named queue targets. It returns immediately; webhook
+// delivery is asynchronous. Queue target delivery runs in a fire-and-forget
+// goroutine so it does not block the write path.
 func (d *Dispatcher) Dispatch(cfg NotificationConfig, name EventName, key string, records []Record) {
 	webhooks := MatchingWebhooks(cfg, name, key)
-	if len(webhooks) == 0 {
-		return
-	}
 	for _, wh := range webhooks {
 		d.mu.RLock()
 		t, ok := d.targets[wh.URL]
@@ -96,6 +112,28 @@ func (d *Dispatcher) Dispatch(cfg NotificationConfig, name EventName, key string
 		default:
 			d.dropped.add(1)
 		}
+	}
+
+	// Deliver to named queue targets (non-URL QueueConfiguration entries).
+	qids := MatchingQueueIDs(cfg, name, key)
+	if len(qids) == 0 {
+		return
+	}
+	env := Envelope{Records: records}
+	for _, id := range qids {
+		d.qmu.RLock()
+		qt, ok := d.queueTargets[id]
+		d.qmu.RUnlock()
+		if !ok {
+			continue
+		}
+		go func(qt QueueTarget) {
+			if err := qt.Deliver(context.Background(), env); err != nil {
+				d.queueFailed.add(1)
+			} else {
+				d.queueDelivered.add(1)
+			}
+		}(qt)
 	}
 }
 
@@ -187,10 +225,12 @@ func (d *Dispatcher) Close() {
 // Stats returns a snapshot of the delivery counters.
 func (d *Dispatcher) Stats() DispatchStats {
 	return DispatchStats{
-		Queued:  d.queued.load(),
-		Sent:    d.sent.load(),
-		Dropped: d.dropped.load(),
-		Failed:  d.failed.load(),
+		Queued:         d.queued.load(),
+		Sent:           d.sent.load(),
+		Dropped:        d.dropped.load(),
+		Failed:         d.failed.load(),
+		QueueDelivered: d.queueDelivered.load(),
+		QueueFailed:    d.queueFailed.load(),
 	}
 }
 

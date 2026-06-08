@@ -18,6 +18,7 @@ type clusterSource interface {
 	StorageInfo() object.StorageInfo
 	DiskUsage(ctx context.Context) object.DiskUsage
 	MRFStats() object.MRFStats
+	ReplicationStats() (replicated int64, failed int64)
 }
 
 // clusterCollector exposes the deployment's capacity and health as the cluster metric
@@ -55,6 +56,8 @@ type clusterSnapshot struct {
 	healDropped     float64
 	healHealed      float64
 	healFailed      float64
+	replReplicated  float64
+	replFailed      float64
 }
 
 // newClusterCollector builds a collector with the production probe timeout and snapshot
@@ -67,6 +70,7 @@ func newClusterCollector(src clusterSource) *clusterCollector {
 // registerClusterMetrics wires the cluster capacity and health families onto reg, each
 // reading its field from the shared per-scrape snapshot. The three heal totals are
 // monotonic, so they register as counters; everything else is a point-in-time gauge.
+// It also calls RegisterReplicationMetrics.
 func registerClusterMetrics(reg *metrics.Registry, src clusterSource) {
 	c := newClusterCollector(src)
 	reg.NewGaugeFunc("liteio_cluster_drives_total",
@@ -108,6 +112,18 @@ func registerClusterMetrics(reg *metrics.Registry, src clusterSource) {
 	reg.NewCounterFunc("liteio_cluster_heal_failed_total",
 		"Reactive-heal tasks the worker could not repair.",
 		func() float64 { return c.snapshot().healFailed })
+	RegisterReplicationMetrics(reg, c)
+}
+
+// RegisterReplicationMetrics adds replication counters to reg. It is split out
+// so tests can call it independently from the cluster health families.
+func RegisterReplicationMetrics(reg *metrics.Registry, c *clusterCollector) {
+	reg.NewCounterFunc("liteio_replication_replicated_total",
+		"Objects successfully replicated to a destination rule.",
+		func() float64 { return c.snapshot().replReplicated })
+	reg.NewCounterFunc("liteio_replication_failed_total",
+		"Replication attempts that failed.",
+		func() float64 { return c.snapshot().replFailed })
 }
 
 // snapshot returns the current derived view, recomputing it when the memoized one has
@@ -165,5 +181,9 @@ func (c *clusterCollector) compute() clusterSnapshot {
 	s.healDropped = float64(heal.Dropped)
 	s.healHealed = float64(heal.Healed)
 	s.healFailed = float64(heal.Failed)
+
+	replicated, replFailed := c.src.ReplicationStats()
+	s.replReplicated = float64(replicated)
+	s.replFailed = float64(replFailed)
 	return s
 }

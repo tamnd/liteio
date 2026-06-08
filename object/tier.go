@@ -12,6 +12,7 @@ import (
 	"path"
 	"time"
 
+	"github.com/tamnd/liteio/event"
 	"github.com/tamnd/liteio/object/meta"
 	"github.com/tamnd/liteio/tier"
 )
@@ -321,6 +322,9 @@ func (sp *ServerPools) RestoreObject(ctx context.Context, bucket, object, versio
 		return fmt.Errorf("object: restore read from tier %q: %w", oi.Tier, err)
 	}
 
+	// Fire restore-initiated event (best effort).
+	go sp.notifyPut(ctx, oi, event.ObjectRestoreInitiated, "")
+
 	// Mark restore ongoing.
 	set := sp.route(object)
 	if err := set.setRestoreStatus(ctx, bucket, object, oi.VersionID, true, time.Time{}); err != nil {
@@ -348,6 +352,8 @@ func (sp *ServerPools) RestoreObject(ctx context.Context, bucket, object, versio
 		_ = set.setRestoreStatus(ctx, bucket, object, oi.VersionID, false, time.Time{})
 		return fmt.Errorf("object: restore write: %w", putErr)
 	}
+	// Fire restore-completed event (best effort).
+	go sp.notifyPut(ctx, oi, event.ObjectRestoreCompleted, "")
 	return nil
 }
 

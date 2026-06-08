@@ -22,6 +22,15 @@ const (
 	ObjectCreatedCompleteMultipartUpload EventName = "s3:ObjectCreated:CompleteMultipartUpload"
 	ObjectRemovedDelete                  EventName = "s3:ObjectRemoved:Delete"
 	ObjectRemovedDeleteMarkerCreated     EventName = "s3:ObjectRemoved:DeleteMarkerCreated"
+
+	// Restore events (spec 09 §9.5).
+	ObjectRestoreInitiated EventName = "s3:ObjectRestore:Post"
+	ObjectRestoreCompleted EventName = "s3:ObjectRestore:Completed"
+
+	// Replication lifecycle events (spec 09 §9.5).
+	ReplicationOperationFailed          EventName = "s3:Replication:OperationFailedReplication"
+	ReplicationOperationMissedThreshold EventName = "s3:Replication:OperationMissedThreshold"
+	ReplicationOperationNotTracked      EventName = "s3:Replication:OperationNotTracked"
 )
 
 // Record is the S3 event notification payload for one object event (doc 09 §9.5).
@@ -158,6 +167,26 @@ func eventMatches(events []EventName, name EventName) bool {
 		}
 	}
 	return false
+}
+
+// MatchingQueueIDs returns the IDs of all QueueConfigurations whose QueueARN is
+// not an HTTP/HTTPS URL (i.e. named queue targets), and whose event and key
+// filter match the given event name and object key.
+func MatchingQueueIDs(cfg NotificationConfig, name EventName, key string) []string {
+	var out []string
+	for _, q := range cfg.QueueConfigurations {
+		if strings.HasPrefix(q.QueueARN, "http://") || strings.HasPrefix(q.QueueARN, "https://") {
+			continue
+		}
+		if eventMatches(q.Events, name) && filterMatches(q.Filter, key) {
+			id := q.ID
+			if id == "" {
+				id = q.QueueARN
+			}
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // MatchingWebhooks returns all webhook targets from cfg whose event and key
