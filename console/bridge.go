@@ -13,11 +13,12 @@ import (
 	"github.com/tamnd/liteio/s3/sign"
 )
 
-// maxBridgeBody caps a bridged request body. Admin calls carry small JSON (a user, a
-// policy) and the S3 browse calls the console makes are bucket and object management
-// (create a bucket, delete an object), not bulk uploads; a larger body is refused
-// before it is read into memory to hash. Streaming object uploads through the bridge
-// (which need a chunked, not single-shot, payload signature) are a later subsystem.
+// maxBridgeBody caps a buffered bridged request body. Admin calls carry small JSON (a
+// user, a policy) and the S3 management calls the console buffers are short (create a
+// bucket, copy headers), so the body is read into memory to hash and a larger one is
+// refused before that read. Object uploads do not take this path: the S3 bridge streams
+// PUT and POST bodies straight through (see forwardStream), so an upload is bounded by
+// the object store, not by this cap.
 const maxBridgeBody = 1 << 20 // 1 MiB
 
 // adminBridgeHost is the synthetic Host the admin bridge signs and dispatches under.
@@ -62,6 +63,13 @@ func (s *Server) handleS3Bridge(w http.ResponseWriter, r *http.Request) {
 	if rest == "" {
 		rest = "/"
 	}
+	// An upload (PutObject, multipart parts) can be arbitrarily large, so stream the
+	// body straight to the S3 server rather than buffering it to hash. Browse, head,
+	// and delete carry no body and take the buffered path with the rest of the bridge.
+	if r.Method == http.MethodPut || r.Method == http.MethodPost {
+		s.forwardStream(w, r, sess, s.s3, s3BridgeHost, rest)
+		return
+	}
 	s.forward(w, r, sess, s.s3, s3BridgeHost, rest)
 }
 
@@ -94,17 +102,35 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, sess session, h
 	}
 	sum := sha256.Sum256(body)
 	payloadHash := hex.EncodeToString(sum[:])
+	s.dispatch(w, r, sess, handler, host, target, bytes.NewReader(body), int64(len(body)), payloadHash)
+}
 
+// forwardStream forwards a SPA request without buffering its body. It signs with an
+// unsigned-payload hash so the signature does not depend on the bytes, then hands the
+// handler the request body directly. An object upload can be far larger than memory, so
+// streaming it keeps the console's footprint flat and lifts the buffered body cap; the
+// S3 server still enforces its own object size limits. The content length is forwarded
+// verbatim, so a client that omits it (a chunked upload) reaches the handler as such.
+func (s *Server) forwardStream(w http.ResponseWriter, r *http.Request, sess session, handler http.Handler, host, target string) {
+	s.dispatch(w, r, sess, handler, host, target, r.Body, r.ContentLength, sign.UnsignedPayload)
+}
+
+// dispatch builds a fresh request to target under the given synthetic host over the
+// supplied body, signs it with the session's credentials for the given payload hash,
+// and serves it to handler in-process. Signing and serving the same request object
+// keeps the signature self-consistent whatever the synthetic host. It is the shared
+// core of the buffered and streaming bridges.
+func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, sess session, handler http.Handler, host, target string, body io.Reader, length int64, payloadHash string) {
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
 	}
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, target, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, target, body)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "could not build the bridged request")
 		return
 	}
 	req.Host = host
-	req.ContentLength = int64(len(body))
+	req.ContentLength = length
 	if ct := r.Header.Get("Content-Type"); ct != "" {
 		req.Header.Set("Content-Type", ct)
 	}

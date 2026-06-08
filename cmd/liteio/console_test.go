@@ -261,6 +261,51 @@ func TestBuildConsoleS3ObjectRoundTrip(t *testing.T) {
 	}
 }
 
+// TestBuildConsoleStreamingUpload proves the S3 bridge streams an upload rather than
+// buffering it: it PUTs an object several times larger than the buffered body cap and
+// reads it back byte-for-byte. A buffered bridge would refuse the body with a 413, so
+// a clean round-trip is the evidence the streaming path carries the upload.
+func TestBuildConsoleStreamingUpload(t *testing.T) {
+	store := auth.NewStore("liteioadmin", "liteioadmin")
+	layer := newDriveLayer(t, 4, 2)
+	s3Handler := s3.NewServer(layer, store)
+	handler, _, err := buildConsole(rootCfg(), store, layer, s3Handler)
+	if err != nil {
+		t.Fatalf("buildConsole: %v", err)
+	}
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	login := mustJSON(t, map[string]string{"accessKey": "liteioadmin", "secretKey": "liteioadmin"})
+	if s := post(t, client, srv.URL+"/api/login", login); s != http.StatusOK {
+		t.Fatalf("login status = %d", s)
+	}
+	if s := sendJSON(t, client, http.MethodPut, srv.URL+"/api/s3/backups", nil); s != http.StatusOK {
+		t.Fatalf("create bucket status = %d, want 200", s)
+	}
+
+	// A body well past the buffered cap, with a recognizable pattern so a truncated or
+	// reordered read shows up in the comparison rather than only in the length.
+	payload := bytes.Repeat([]byte("liteio-streaming-upload-"), 200000) // ~4.8 MiB
+	const bufferedCap = 1 << 20                                         // console.maxBridgeBody, the cap the streaming path lifts
+	if len(payload) <= bufferedCap {
+		t.Fatalf("payload %d bytes does not exceed the buffered cap %d", len(payload), bufferedCap)
+	}
+	if _, s := sendRaw(t, client, http.MethodPut, srv.URL+"/api/s3/backups/archive.bin", payload); s != http.StatusOK {
+		t.Fatalf("streaming upload status = %d, want 200", s)
+	}
+
+	body, status := sendRaw(t, client, http.MethodGet, srv.URL+"/api/s3/backups/archive.bin", nil)
+	if status != http.StatusOK {
+		t.Fatalf("download status = %d, want 200", status)
+	}
+	if body != string(payload) {
+		t.Errorf("downloaded %d bytes, want %d; round-trip mismatch", len(body), len(payload))
+	}
+}
+
 // TestBuildConsoleS3BridgeAbsentWithoutHandler confirms the S3 bridge route is not
 // registered when no S3 handler is wired: the call falls through to the SPA shell
 // (200 HTML) rather than reaching a nil handler.
