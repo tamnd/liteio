@@ -294,9 +294,10 @@ func (s *Server) listObjectVersions(w http.ResponseWriter, r *http.Request, requ
 func (s *Server) putObject(w http.ResponseWriter, r *http.Request, requestID, bucket, object2 string) {
 	size := r.ContentLength
 	opts := object.ObjectOptions{
-		ContentType: r.Header.Get("Content-Type"),
-		UserDefined: userMetaFromHeader(r),
-		SourceIP:    sourceIPFromRequest(r),
+		ContentType:       r.Header.Get("Content-Type"),
+		UserDefined:       userMetaFromHeader(r),
+		SourceIP:          sourceIPFromRequest(r),
+		ReplicationSource: isReplicationSource(r),
 	}
 	if !parseSSECKey(w, r, requestID, &opts) {
 		return

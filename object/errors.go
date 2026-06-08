@@ -101,4 +101,7 @@ var (
 	// ErrNotTiered is returned by RestoreObject when the target object is not
 	// transitioned to a remote tier.
 	ErrNotTiered = errors.New("object: object is not tiered")
+	// ErrNoSuchBucketReplication is returned when no replication configuration
+	// has been set for a bucket.
+	ErrNoSuchBucketReplication = errors.New("object: no such bucket replication configuration")
 )
