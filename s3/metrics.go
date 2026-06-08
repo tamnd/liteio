@@ -153,6 +153,8 @@ func bucketOperation(r *http.Request, q url.Values) string {
 			return "GetBucketEncryption"
 		case q.Has("quota"):
 			return "GetBucketQuota"
+		case q.Has("notification"):
+			return "GetBucketNotificationConfiguration"
 		case q.Has("versions"):
 			return "ListObjectVersions"
 		case q.Has("uploads"):
@@ -176,6 +178,8 @@ func bucketOperation(r *http.Request, q url.Values) string {
 			return "PutBucketEncryption"
 		case q.Has("quota"):
 			return "PutBucketQuota"
+		case q.Has("notification"):
+			return "PutBucketNotificationConfiguration"
 		default:
 			return "CreateBucket"
 		}
@@ -193,6 +197,8 @@ func bucketOperation(r *http.Request, q url.Values) string {
 			return "DeleteBucketEncryption"
 		case q.Has("quota"):
 			return "DeleteBucketQuota"
+		case q.Has("notification"):
+			return "DeleteBucketNotificationConfiguration"
 		}
 		return "DeleteBucket"
 	case http.MethodPost:

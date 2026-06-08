@@ -296,6 +296,7 @@ func (s *Server) putObject(w http.ResponseWriter, r *http.Request, requestID, bu
 	opts := object.ObjectOptions{
 		ContentType: r.Header.Get("Content-Type"),
 		UserDefined: userMetaFromHeader(r),
+		SourceIP:    sourceIPFromRequest(r),
 	}
 	if !parseSSECKey(w, r, requestID, &opts) {
 		return
