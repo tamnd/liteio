@@ -343,6 +343,8 @@ func (s *Server) serveObject(w http.ResponseWriter, r *http.Request, requestID, 
 			s.newMultipartUpload(w, r, requestID, bucket, object)
 		case uploadID != "":
 			s.completeMultipartUpload(w, r, requestID, bucket, object, uploadID)
+		case q.Has("restore"):
+			s.restoreObject(w, r, requestID, bucket, object)
 		default:
 			writeError(w, requestID, r.URL.Path, errMethodNotAllowed)
 		}
