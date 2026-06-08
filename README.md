@@ -182,7 +182,7 @@ the living source of truth and is updated as milestones land.
 | Certificate federation (AssumeRoleWithCertificate, X.509 chain validation, subject-to-policy) | implemented (M4) |
 | LDAP federation (AssumeRoleWithLDAPIdentity, lookup-then-bind, groups-to-policy) | implemented (M4) |
 | Session-token binding (X-Amz-Security-Token validated per request, expiry enforced) | implemented (M4) |
-| Free web console | planned (M5) |
+| Free web console (embedded SPA, server-side sessions, signed in-process admin bridge) | in progress (M5) |
 | Lifecycle / encryption / object lock | planned (M6) |
 | Replication / tiering / events | planned (M7) |
 | Rebalance / decommission | planned (M8) |

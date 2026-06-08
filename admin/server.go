@@ -21,8 +21,13 @@ import (
 	"github.com/tamnd/liteio/s3/sign"
 )
 
-// apiPrefix is the version-pinned root every admin route hangs under.
+// apiPrefix is the version-pinned root every admin route hangs under. APIPrefix
+// exports it so an in-process caller (the web console's signed bridge, doc 10.1)
+// can target the same routes without hardcoding the string.
 const apiPrefix = "/liteio/admin/v1"
+
+// APIPrefix is the version-pinned root every admin route hangs under.
+const APIPrefix = apiPrefix
 
 // adminResource is the ARN admin actions authorize against; it matches the
 // Resource of the consoleAdmin canned policy (doc 08), so that policy grants the
