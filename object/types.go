@@ -401,4 +401,9 @@ type ObjectLayer interface {
 	SetBucketReplication(ctx context.Context, bucket string, cfg replication.ReplicationConfig) error
 	GetBucketReplication(ctx context.Context, bucket string) (replication.ReplicationConfig, error)
 	DeleteBucketReplication(ctx context.Context, bucket string) error
+
+	// CORS: bucket cross-origin resource sharing configuration
+	SetBucketCORS(ctx context.Context, bucket string, cfg CORSConfig) error
+	GetBucketCORS(ctx context.Context, bucket string) (CORSConfig, error)
+	DeleteBucketCORS(ctx context.Context, bucket string) error
 }

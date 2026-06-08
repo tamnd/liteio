@@ -3,6 +3,9 @@
 package s3
 
 import (
+	"crypto/md5"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/xml"
 	"errors"
 	"io"
@@ -289,9 +292,123 @@ func (s *Server) listObjectVersions(w http.ResponseWriter, r *http.Request, requ
 	writeXML(w, requestID, http.StatusOK, out)
 }
 
+// listObjectsV1 handles GET /bucket (without ?list-type=2). It maps the v1
+// ?marker query parameter to the V2 StartAfter, then renders the result in the
+// ListBucketResult (v1) envelope. S3 v1 uses NextMarker instead of a
+// continuation token, set to the last key when the result is truncated.
+func (s *Server) listObjectsV1(w http.ResponseWriter, r *http.Request, requestID, bucket string) {
+	q := r.URL.Query()
+	maxKeys := 1000
+	if v := q.Get("max-keys"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			maxKeys = n
+		}
+	}
+	prefix := q.Get("prefix")
+	delim := q.Get("delimiter")
+	marker := q.Get("marker")
+
+	// The v1 marker maps to v2's start-after: it names the key after which listing
+	// begins (exclusive). The v2 token and fetch-owner are unused for v1.
+	res, err := s.layer.ListObjectsV2(r.Context(), bucket, prefix, "", marker, delim, maxKeys, false)
+	if err != nil {
+		s.fail(w, requestID, r.URL.Path, err)
+		return
+	}
+
+	out := listBucketV1Result{
+		XMLNS:       s3XMLNS,
+		Name:        bucket,
+		Prefix:      prefix,
+		Marker:      marker,
+		MaxKeys:     maxKeys,
+		Delimiter:   delim,
+		IsTruncated: res.IsTruncated,
+	}
+	for _, o := range res.Objects {
+		out.Contents = append(out.Contents, objectEntry{
+			Key:          o.Name,
+			LastModified: amzTime(o.ModTime),
+			ETag:         quoteETag(o.ETag),
+			Size:         o.Size,
+			StorageClass: "STANDARD",
+		})
+	}
+	for _, p := range res.Prefixes {
+		out.CommonPrefixes = append(out.CommonPrefixes, commonPrefixEntry{Prefix: p})
+	}
+	// NextMarker is set to the last key in the listing when the result is
+	// truncated, so the caller knows where to continue.
+	if res.IsTruncated && len(out.Contents) > 0 {
+		out.NextMarker = out.Contents[len(out.Contents)-1].Key
+	}
+	writeXML(w, requestID, http.StatusOK, out)
+}
+
+// getObjectAttributes handles GET /bucket/key?attributes. The
+// x-amz-object-attributes header is a comma-separated list selecting which
+// attribute groups to include: ETag, StorageClass, ObjectSize, ObjectParts.
+func (s *Server) getObjectAttributes(w http.ResponseWriter, r *http.Request, requestID, bucket, obj string) {
+	opts := object.ObjectOptions{VersionID: r.URL.Query().Get("versionId")}
+	info, err := s.layer.GetObjectInfo(r.Context(), bucket, obj, opts)
+	if err != nil {
+		s.fail(w, requestID, r.URL.Path, err)
+		return
+	}
+
+	attrs := make(map[string]bool)
+	for _, a := range strings.Split(r.Header.Get("x-amz-object-attributes"), ",") {
+		attrs[strings.TrimSpace(a)] = true
+	}
+	// If the header is absent or empty, return all attributes.
+	all := len(attrs) == 0 || (len(attrs) == 1 && attrs[""])
+
+	out := getObjectAttributesResponse{XMLNS: s3XMLNS}
+	if all || attrs["ETag"] {
+		out.ETag = strings.Trim(info.ETag, "\"")
+	}
+	if all || attrs["StorageClass"] {
+		out.StorageClass = "STANDARD"
+	}
+	if all || attrs["ObjectSize"] {
+		out.ObjectSize = info.Size
+	}
+	if (all || attrs["ObjectParts"]) && len(info.Parts) > 0 {
+		parts := make([]objectPartAttr, 0, len(info.Parts))
+		for _, p := range info.Parts {
+			parts = append(parts, objectPartAttr{
+				PartNumber: p.Number,
+				Size:       p.Size,
+			})
+		}
+		out.ObjectParts = &objectPartsResponse{
+			TotalPartsCount: len(parts),
+			Parts:           parts,
+		}
+	}
+	writeXML(w, requestID, http.StatusOK, out)
+}
+
 // --- objects ---------------------------------------------------------------
 
 func (s *Server) putObject(w http.ResponseWriter, r *http.Request, requestID, bucket, object2 string) {
+	// Conditional write: If-None-Match: * means "fail if the object already exists."
+	if r.Header.Get("If-None-Match") == "*" {
+		_, err := s.layer.GetObjectInfo(r.Context(), bucket, object2, object.ObjectOptions{})
+		if err == nil {
+			// Object exists; precondition failed.
+			writeError(w, requestID, r.URL.Path, errPreconditionFailed)
+			return
+		}
+		// Any error other than not-found (bucket missing, quorum error, etc.) is a
+		// real failure; only ErrObjectNotFound means the object is absent and the
+		// write can proceed.
+		if !errors.Is(err, object.ErrObjectNotFound) {
+			s.fail(w, requestID, r.URL.Path, err)
+			return
+		}
+	}
+
 	size := r.ContentLength
 	opts := object.ObjectOptions{
 		ContentType:       r.Header.Get("Content-Type"),
@@ -308,6 +425,29 @@ func (s *Server) putObject(w http.ResponseWriter, r *http.Request, requestID, bu
 		s.fail(w, requestID, r.URL.Path, err)
 		return
 	}
+
+	// Content-MD5 validation: if the client sent a base64-encoded MD5, compare it
+	// against the hex ETag the object layer computed. A mismatch means the bytes
+	// were corrupted in transit; delete the just-written object and return 400.
+	if contentMD5 := r.Header.Get("Content-MD5"); contentMD5 != "" {
+		rawMD5, decErr := base64.StdEncoding.DecodeString(contentMD5)
+		if decErr != nil || len(rawMD5) != md5.Size {
+			_, _ = s.layer.DeleteObject(r.Context(), bucket, object2, object.ObjectOptions{})
+			writeError(w, requestID, r.URL.Path, errBadDigest)
+			return
+		}
+		hexMD5 := hex.EncodeToString(rawMD5)
+		// info.ETag may be quoted ("abc...") or bare (abc...); strip quotes.
+		etag := strings.Trim(info.ETag, "\"")
+		// For multipart objects the ETag contains a dash (etag-N); skip the check
+		// because the ETag is not a plain MD5 in that case.
+		if !strings.Contains(etag, "-") && etag != hexMD5 {
+			_, _ = s.layer.DeleteObject(r.Context(), bucket, object2, object.ObjectOptions{})
+			writeError(w, requestID, r.URL.Path, errBadDigest)
+			return
+		}
+	}
+
 	w.Header().Set("ETag", quoteETag(info.ETag))
 	if info.VersionID != "" {
 		w.Header().Set("x-amz-version-id", info.VersionID)

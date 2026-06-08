@@ -86,10 +86,16 @@ type resource struct {
 	object string
 }
 
-// ServeHTTP implements http.Handler. When metrics are enabled it wraps the request to
-// record the operation, latency, status, and bytes, then serves it; otherwise it
-// serves directly with no per-request overhead.
+// ServeHTTP implements http.Handler. OPTIONS requests are dispatched to the CORS
+// preflight handler immediately, before SigV4 verification, because S3 CORS
+// preflights are unauthenticated. All other requests go through the normal
+// authenticate-then-dispatch path; when metrics are enabled the whole flow is
+// wrapped for instrumentation.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		s.handleCORSPreflight(w, r)
+		return
+	}
 	if s.metrics == nil {
 		s.serve(w, r)
 		return
@@ -223,12 +229,20 @@ func (s *Server) serveBucket(w http.ResponseWriter, r *http.Request, requestID, 
 			s.getBucketNotificationConfiguration(w, r, requestID, bucket)
 		case q.Has("replication"):
 			s.getBucketReplicationConfiguration(w, r, requestID, bucket)
+		case q.Has("cors"):
+			s.getBucketCors(w, r, requestID, bucket)
+		case q.Has("acl"):
+			s.getBucketAcl(w, r, requestID, bucket)
 		case q.Has("versions"):
 			s.listObjectVersions(w, r, requestID, bucket)
 		case q.Has("uploads"):
 			s.listMultipartUploads(w, r, requestID, bucket)
 		default:
-			s.listObjectsV2(w, r, requestID, bucket)
+			if q.Get("list-type") == "2" {
+				s.listObjectsV2(w, r, requestID, bucket)
+			} else {
+				s.listObjectsV1(w, r, requestID, bucket)
+			}
 		}
 	case http.MethodPut:
 		switch {
@@ -250,6 +264,10 @@ func (s *Server) serveBucket(w http.ResponseWriter, r *http.Request, requestID, 
 			s.putBucketNotificationConfiguration(w, r, requestID, bucket)
 		case q.Has("replication"):
 			s.putBucketReplicationConfiguration(w, r, requestID, bucket)
+		case q.Has("cors"):
+			s.putBucketCors(w, r, requestID, bucket)
+		case q.Has("acl"):
+			s.putBucketAcl(w, r, requestID, bucket)
 		default:
 			s.createBucket(w, r, requestID, bucket)
 		}
@@ -277,6 +295,9 @@ func (s *Server) serveBucket(w http.ResponseWriter, r *http.Request, requestID, 
 			return
 		case q.Has("replication"):
 			s.deleteBucketReplicationConfiguration(w, r, requestID, bucket)
+			return
+		case q.Has("cors"):
+			s.deleteBucketCors(w, r, requestID, bucket)
 			return
 		}
 		s.deleteBucket(w, r, requestID, bucket)
@@ -323,6 +344,10 @@ func (s *Server) serveObject(w http.ResponseWriter, r *http.Request, requestID, 
 			s.putObjectLegalHold(w, r, requestID, bucket, object)
 			return
 		}
+		if q.Has("acl") {
+			s.putObjectAcl(w, r, requestID, bucket, object)
+			return
+		}
 		s.putObject(w, r, requestID, bucket, object)
 	case http.MethodGet:
 		if uploadID != "" {
@@ -339,6 +364,14 @@ func (s *Server) serveObject(w http.ResponseWriter, r *http.Request, requestID, 
 		}
 		if q.Has("legal-hold") {
 			s.getObjectLegalHold(w, r, requestID, bucket, object)
+			return
+		}
+		if q.Has("acl") {
+			s.getObjectAcl(w, r, requestID, bucket, object)
+			return
+		}
+		if q.Has("attributes") {
+			s.getObjectAttributes(w, r, requestID, bucket, object)
 			return
 		}
 		s.getObject(w, r, requestID, bucket, object)
