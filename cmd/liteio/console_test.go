@@ -354,6 +354,76 @@ func TestBuildConsoleIdentityManagement(t *testing.T) {
 	}
 }
 
+// TestBuildConsoleGroupsAndServiceAccounts drives the rest of the IAM screens' flow:
+// create a group, add and remove a member (confirming the group GET reports members),
+// and create, list, and delete a service account under a parent user.
+func TestBuildConsoleGroupsAndServiceAccounts(t *testing.T) {
+	store := auth.NewStore("liteioadmin", "liteioadmin")
+	handler, _, err := buildConsole(rootCfg(), store, nil, nil)
+	if err != nil {
+		t.Fatalf("buildConsole: %v", err)
+	}
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	login := mustJSON(t, map[string]string{"accessKey": "liteioadmin", "secretKey": "liteioadmin"})
+	if s := post(t, client, srv.URL+"/api/login", login); s != http.StatusOK {
+		t.Fatalf("login status = %d", s)
+	}
+
+	// A user to be a member and a service-account parent.
+	if s := putJSON(t, client, srv.URL+"/api/admin/users/alice", mustJSON(t, map[string]any{"secretKey": "alicesecret1"})); s != http.StatusNoContent {
+		t.Fatalf("create user status = %d", s)
+	}
+
+	// Create a group and add alice to it.
+	if s := putJSON(t, client, srv.URL+"/api/admin/groups/ops", mustJSON(t, map[string]any{"policies": []string{"readwrite"}})); s != http.StatusNoContent {
+		t.Fatalf("create group status = %d", s)
+	}
+	if s := sendJSON(t, client, http.MethodPut, srv.URL+"/api/admin/groups/ops/members/alice", nil); s != http.StatusNoContent {
+		t.Fatalf("add member status = %d", s)
+	}
+
+	// The group GET reports the member the console renders.
+	body, status := getBody(t, client, srv.URL+"/api/admin/groups/ops", csrfHeaders())
+	if status != http.StatusOK {
+		t.Fatalf("get group status = %d; body %q", status, body)
+	}
+	var g struct {
+		Name    string   `json:"name"`
+		Members []string `json:"members"`
+	}
+	if err := json.Unmarshal([]byte(body), &g); err != nil {
+		t.Fatalf("decode group: %v (%q)", err, body)
+	}
+	if len(g.Members) != 1 || g.Members[0] != "alice" {
+		t.Errorf("group members = %v, want [alice]", g.Members)
+	}
+
+	// Remove the member.
+	if s := sendJSON(t, client, http.MethodDelete, srv.URL+"/api/admin/groups/ops/members/alice", nil); s != http.StatusNoContent {
+		t.Fatalf("remove member status = %d", s)
+	}
+
+	// Create a service account under alice, list it, then delete it.
+	saBody := mustJSON(t, map[string]any{"accessKey": "alice-svc", "secretKey": "svcsecret123", "parentUser": "alice"})
+	if s := putJSON(t, client, srv.URL+"/api/admin/service-accounts", saBody); s != http.StatusNoContent {
+		t.Fatalf("create service account status = %d", s)
+	}
+	listBody, status := getBody(t, client, srv.URL+"/api/admin/service-accounts?user=alice", csrfHeaders())
+	if status != http.StatusOK {
+		t.Fatalf("list service accounts status = %d; body %q", status, listBody)
+	}
+	if !strings.Contains(listBody, "alice-svc") {
+		t.Errorf("service account list missing the new account, got %q", listBody)
+	}
+	if s := sendJSON(t, client, http.MethodDelete, srv.URL+"/api/admin/service-accounts/alice-svc", nil); s != http.StatusNoContent {
+		t.Fatalf("delete service account status = %d", s)
+	}
+}
+
 // newDriveLayer builds a single-set object layer over n local drives in temp dirs.
 func newDriveLayer(t *testing.T, n, parity int) object.ObjectLayer {
 	t.Helper()

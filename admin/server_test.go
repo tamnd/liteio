@@ -182,6 +182,10 @@ func TestGroupLifecycle(t *testing.T) {
 	if !slices.Equal(g.Policies, []string{"readwrite"}) {
 		t.Fatalf("group = %+v", g)
 	}
+	// The group GET reports its members so the console can render them.
+	if !slices.Equal(g.Members, []string{"alice"}) {
+		t.Fatalf("group members = %v, want [alice]", g.Members)
+	}
 	groups := decode[map[string][]string](t, h.admin(http.MethodGet, "/liteio/admin/v1/groups", nil))
 	if !slices.Contains(groups["groups"], "ops") {
 		t.Fatalf("groups = %v", groups["groups"])

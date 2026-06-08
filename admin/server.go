@@ -51,6 +51,7 @@ type IAM interface {
 	DeleteGroup(name string) error
 	AddUserToGroup(accessKey, group string) error
 	RemoveUserFromGroup(accessKey, group string) error
+	GroupMembers(group string) ([]string, error)
 
 	PolicyNames() []string
 	GetPolicy(name string) (auth.Policy, bool)
