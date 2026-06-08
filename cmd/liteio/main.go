@@ -97,6 +97,7 @@ func run(argv []string) error {
 	if sp, ok := layer.(*object.ServerPools); ok {
 		registerClusterMetrics(registry, sp)
 	}
+	registerRuntimeMetrics(registry, time.Now)
 	opts := []s3.Option{
 		s3.WithAuthorizer(store),
 		s3.WithSTS(store),

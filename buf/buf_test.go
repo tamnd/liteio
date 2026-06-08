@@ -68,6 +68,28 @@ func TestPutForeignBufferSafe(t *testing.T) {
 	Put(nil)
 }
 
+// TestPoolStats checks that PoolStats reflects Get and Put calls.
+func TestPoolStats(t *testing.T) {
+	getsBefore, putsBefore := PoolStats()
+
+	// Call Get for every pooled size class plus one oversized allocation.
+	sizes := append([]int(nil), sizeClasses...)
+	sizes = append(sizes, 16<<20) // oversized: not pooled, but still counted
+	for _, sz := range sizes {
+		b := Get(sz)
+		Put(b)
+	}
+	n := len(sizes)
+
+	getsAfter, putsAfter := PoolStats()
+	if got := int(getsAfter - getsBefore); got < n {
+		t.Errorf("gets delta = %d, want >= %d", got, n)
+	}
+	if got := int(putsAfter - putsBefore); got < n {
+		t.Errorf("puts delta = %d, want >= %d", got, n)
+	}
+}
+
 func BenchmarkGetPut1MiB(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
