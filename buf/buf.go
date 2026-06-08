@@ -13,8 +13,19 @@ package buf
 
 import (
 	"sync"
+	"sync/atomic"
 	"unsafe"
 )
+
+var bufGets, bufPuts atomic.Uint64
+
+// PoolStats returns the all-time number of Get and Put calls made against the
+// pool. The counters are process-lifetime monotonic totals; they are useful for
+// calculating a pool hit rate: hits = puts / gets (puts that return to the pool
+// rather than being dropped indicate a size-class hit).
+func PoolStats() (gets, puts uint64) {
+	return bufGets.Load(), bufPuts.Load()
+}
 
 // Alignment is the buffer/offset/length alignment used for O_DIRECT. 4096 bytes
 // covers both 512-byte and 4 KiB native block devices.
@@ -69,6 +80,7 @@ func alignmentOffset(block []byte) int {
 // size class fits. The returned buffer's contents are not zeroed. Return it with
 // Put when done.
 func Get(size int) []byte {
+	bufGets.Add(1)
 	for i, classSize := range sizeClasses {
 		if size <= classSize {
 			bp := pools[i].Get().(*[]byte)
@@ -84,6 +96,7 @@ func Get(size int) []byte {
 // whose capacity does not match a size class (for example a re-sliced foreign
 // buffer) is also dropped, so Put is always safe to call.
 func Put(b []byte) {
+	bufPuts.Add(1)
 	c := cap(b)
 	for i, classSize := range sizeClasses {
 		if c == classSize {
