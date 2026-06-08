@@ -50,6 +50,17 @@ table.sets button.bucket { font-weight: 600; }
 td.actions { white-space: nowrap; }
 td.actions button { margin: 0 0.5rem 0 0; }
 td.actions button.del { color: #c0392b; }
+h3 { font-size: 1rem; margin: 1.25rem 0 0.5rem; }
+.iam-form { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin: 0.5rem 0; }
+.iam-form input, .iam-form select { padding: 0.45rem 0.6rem; border: 1px solid var(--border); border-radius: 6px; font: inherit; }
+.iam-form button { margin: 0; padding: 0.45rem 0.9rem; }
+ul.attached { margin: 0.5rem 0; padding-left: 1.25rem; }
+ul.attached button.detach { color: #c0392b; margin-left: 0.5rem; }
+#attach { display: flex; gap: 0.5rem; align-items: center; margin: 0.5rem 0; }
+#attach select { padding: 0.45rem 0.6rem; border: 1px solid var(--border); border-radius: 6px; font: inherit; }
+#attach button { margin: 0; padding: 0.45rem 0.9rem; }
+pre.policy-doc { background: rgba(127,127,127,0.1); padding: 0.75rem; border-radius: 6px; overflow: auto; font-size: 0.85em; }
+textarea.policy-edit { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; padding: 0.6rem; border: 1px solid var(--border); border-radius: 6px; }
 h2 { font-size: 1.1rem; margin: 1.5rem 0 0.75rem; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.75rem; margin: 0; }
 .grid dt { font-size: 0.8rem; color: #777; }

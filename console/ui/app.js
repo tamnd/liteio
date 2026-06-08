@@ -61,6 +61,7 @@ function renderApp(session) {
     <nav class="tabs">
       <button class="tab" data-view="cluster">Cluster</button>
       <button class="tab" data-view="buckets">Buckets</button>
+      <button class="tab" data-view="identity">Identity</button>
     </nav>
     <section id="view"><p class="muted">Loading...</p></section>`;
   document.getElementById("logout").addEventListener("click", async () => {
@@ -80,6 +81,8 @@ function selectView(name) {
   }
   if (name === "buckets") {
     loadBuckets();
+  } else if (name === "identity") {
+    loadIdentity();
   } else {
     loadDashboard();
   }
@@ -333,6 +336,228 @@ async function deleteObject(bucket, key) {
     return;
   }
   loadObjects(bucket);
+}
+
+// loadIdentity renders the IAM management view: the users and policies the admin
+// bridge serves. Groups and service accounts are a planned follow-up. A 404 on the
+// users list means the node does not expose the admin API.
+async function loadIdentity() {
+  const el = document.getElementById("view");
+  const ur = await api("GET", "/api/admin/users");
+  if (ur.status === 404) {
+    el.innerHTML = `<p class="muted">Identity management is not available on this node.</p>`;
+    return;
+  }
+  if (!ur.ok) {
+    el.innerHTML = `<p class="error">Could not load users.</p>`;
+    return;
+  }
+  const users = (await ur.json()).users ?? [];
+  const policies = (await (await api("GET", "/api/admin/policies")).json()).policies ?? [];
+  const userRows = users.map((u) => `<tr>
+      <td><button class="link user" data-key="${esc(u)}">${esc(u)}</button></td>
+      <td class="actions"><button class="link del-user" data-key="${esc(u)}">Delete</button></td>
+    </tr>`).join("");
+  const policyRows = policies.map((p) => `<tr>
+      <td><button class="link policy" data-name="${esc(p)}">${esc(p)}</button></td>
+      <td class="actions"><button class="link del-policy" data-name="${esc(p)}">Delete</button></td>
+    </tr>`).join("");
+  el.innerHTML = `
+    <h2>Users</h2>
+    <form id="mkuser" class="iam-form">
+      <input id="uaccess" placeholder="access key" />
+      <input id="usecret" type="password" placeholder="secret key" />
+      <input id="upolicies" placeholder="policies (comma-separated)" />
+      <button type="submit">Create</button>
+    </form>
+    <div class="error" id="user-error"></div>
+    ${users.length ? `<table class="sets"><tbody>${userRows}</tbody></table>` : `<p class="muted">No users yet.</p>`}
+    <div id="user-detail"></div>
+    <h2>Policies</h2>
+    <form id="mkpolicy" class="iam-form">
+      <input id="paccess" placeholder="policy name" />
+      <button type="submit">New / edit</button>
+    </form>
+    <div class="error" id="policy-error"></div>
+    ${policies.length ? `<table class="sets"><tbody>${policyRows}</tbody></table>` : `<p class="muted">No policies.</p>`}
+    <div id="policy-detail"></div>`;
+
+  document.getElementById("mkuser").addEventListener("submit", (e) => {
+    e.preventDefault();
+    createUser(document.getElementById("uaccess").value.trim(),
+      document.getElementById("usecret").value,
+      document.getElementById("upolicies").value);
+  });
+  for (const b of document.querySelectorAll("button.user")) {
+    b.addEventListener("click", () => showUser(b.dataset.key, policies));
+  }
+  for (const b of document.querySelectorAll("button.del-user")) {
+    b.addEventListener("click", () => deleteUser(b.dataset.key));
+  }
+  document.getElementById("mkpolicy").addEventListener("submit", (e) => {
+    e.preventDefault();
+    editPolicy(document.getElementById("paccess").value.trim());
+  });
+  for (const b of document.querySelectorAll("button.policy")) {
+    b.addEventListener("click", () => showPolicy(b.dataset.name));
+  }
+  for (const b of document.querySelectorAll("button.del-policy")) {
+    b.addEventListener("click", () => deletePolicy(b.dataset.name));
+  }
+}
+
+// splitList turns a comma-separated input into a trimmed, non-empty name list.
+function splitList(s) {
+  return s.split(",").map((x) => x.trim()).filter(Boolean);
+}
+
+// createUser creates a user through the admin bridge, then refreshes the view.
+async function createUser(accessKey, secretKey, policiesCSV) {
+  const err = document.getElementById("user-error");
+  if (!accessKey || !secretKey) {
+    err.textContent = "Access key and secret key are required.";
+    return;
+  }
+  const r = await api("PUT", "/api/admin/users/" + encodeURIComponent(accessKey),
+    { secretKey, policies: splitList(policiesCSV) });
+  if (!r.ok) {
+    err.textContent = `Create failed (${r.status}).`;
+    return;
+  }
+  loadIdentity();
+}
+
+// deleteUser removes a user (and its service accounts) through the admin bridge.
+async function deleteUser(accessKey) {
+  const err = document.getElementById("user-error");
+  const r = await api("DELETE", "/api/admin/users/" + encodeURIComponent(accessKey));
+  if (!r.ok) {
+    err.textContent = `Delete failed (${r.status}).`;
+    return;
+  }
+  loadIdentity();
+}
+
+// showUser fetches a user's attached policies and groups and renders an attach /
+// detach panel below the table.
+async function showUser(accessKey, allPolicies) {
+  const panel = document.getElementById("user-detail");
+  const r = await api("GET", "/api/admin/users/" + encodeURIComponent(accessKey));
+  if (!r.ok) {
+    panel.innerHTML = `<p class="error">Could not load ${esc(accessKey)} (${r.status}).</p>`;
+    return;
+  }
+  const u = await r.json();
+  const attached = u.policies ?? [];
+  const detachable = attached.map((p) => `<li>${esc(p)}
+      <button class="link detach" data-policy="${esc(p)}">detach</button></li>`).join("");
+  const options = allPolicies.map((p) => `<option value="${esc(p)}">${esc(p)}</option>`).join("");
+  panel.innerHTML = `
+    <h3>${esc(accessKey)}</h3>
+    <p class="muted">Groups: ${(u.groups ?? []).map(esc).join(", ") || "none"}</p>
+    <ul class="attached">${detachable || "<li class=\"muted\">No policies attached.</li>"}</ul>
+    <form id="attach"><select id="apolicy">${options}</select><button type="submit">Attach</button></form>
+    <div class="error" id="attach-error"></div>`;
+  document.getElementById("attach").addEventListener("submit", (e) => {
+    e.preventDefault();
+    attachPolicy(accessKey, document.getElementById("apolicy").value, allPolicies);
+  });
+  for (const b of document.querySelectorAll("button.detach")) {
+    b.addEventListener("click", () => detachPolicy(accessKey, b.dataset.policy, allPolicies));
+  }
+}
+
+// attachPolicy attaches a policy to a user, then re-renders the user panel.
+async function attachPolicy(accessKey, policy, allPolicies) {
+  const err = document.getElementById("attach-error");
+  if (!policy) {
+    err.textContent = "Choose a policy.";
+    return;
+  }
+  const r = await api("PUT", `/api/admin/users/${encodeURIComponent(accessKey)}/policies/${encodeURIComponent(policy)}`);
+  if (!r.ok) {
+    err.textContent = `Attach failed (${r.status}).`;
+    return;
+  }
+  showUser(accessKey, allPolicies);
+}
+
+// detachPolicy detaches a policy from a user, then re-renders the user panel.
+async function detachPolicy(accessKey, policy, allPolicies) {
+  const err = document.getElementById("attach-error");
+  const r = await api("DELETE", `/api/admin/users/${encodeURIComponent(accessKey)}/policies/${encodeURIComponent(policy)}`);
+  if (!r.ok) {
+    err.textContent = `Detach failed (${r.status}).`;
+    return;
+  }
+  showUser(accessKey, allPolicies);
+}
+
+// showPolicy fetches a policy document and renders it pretty-printed.
+async function showPolicy(name) {
+  const panel = document.getElementById("policy-detail");
+  const r = await api("GET", "/api/admin/policies/" + encodeURIComponent(name));
+  if (!r.ok) {
+    panel.innerHTML = `<p class="error">Could not load policy ${esc(name)} (${r.status}).</p>`;
+    return;
+  }
+  const doc = await r.json();
+  panel.innerHTML = `<h3>${esc(name)}</h3>
+    <pre class="policy-doc">${esc(JSON.stringify(doc, null, 2))}</pre>
+    <button class="link" id="edit-policy">Edit</button>`;
+  document.getElementById("edit-policy").addEventListener("click", () => editPolicy(name, JSON.stringify(doc, null, 2)));
+}
+
+// editPolicy opens an editor for a policy document (new or existing) and PUTs it to
+// the admin bridge on save. A canned policy name is rejected by the server.
+async function editPolicy(name, current) {
+  const panel = document.getElementById("policy-detail");
+  if (!name) {
+    document.getElementById("policy-error").textContent = "Enter a policy name.";
+    return;
+  }
+  const seed = current ?? `{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Effect": "Allow", "Action": ["s3:GetObject"], "Resource": ["arn:aws:s3:::*"] }
+  ]
+}`;
+  panel.innerHTML = `<h3>Edit ${esc(name)}</h3>
+    <textarea id="policy-body" rows="14" class="policy-edit">${esc(seed)}</textarea>
+    <div><button id="save-policy">Save</button></div>
+    <div class="error" id="policy-edit-error"></div>`;
+  document.getElementById("save-policy").addEventListener("click", () => savePolicy(name));
+}
+
+// savePolicy validates the editor's JSON locally, then PUTs it to the admin bridge.
+async function savePolicy(name) {
+  const err = document.getElementById("policy-edit-error");
+  const text = document.getElementById("policy-body").value;
+  let doc;
+  try {
+    doc = JSON.parse(text);
+  } catch (e) {
+    err.textContent = "Policy is not valid JSON.";
+    return;
+  }
+  const r = await api("PUT", "/api/admin/policies/" + encodeURIComponent(name), doc);
+  if (!r.ok) {
+    err.textContent = `Save failed (${r.status}).`;
+    return;
+  }
+  loadIdentity();
+}
+
+// deletePolicy removes a custom policy through the admin bridge (canned policies are
+// refused by the server).
+async function deletePolicy(name) {
+  const err = document.getElementById("policy-error");
+  const r = await api("DELETE", "/api/admin/policies/" + encodeURIComponent(name));
+  if (!r.ok) {
+    err.textContent = `Delete failed (${r.status}); canned policies cannot be removed.`;
+    return;
+  }
+  loadIdentity();
 }
 
 // bytes formats a byte count in binary units (KiB, MiB, ...) for the dashboard.
