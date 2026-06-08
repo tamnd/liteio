@@ -32,6 +32,12 @@ type StorageAPI interface {
 	// online while its root is accessible.
 	IsOnline() bool
 
+	// DiskInfo reports the drive's underlying filesystem capacity. It returns
+	// ErrDiskInfoUnsupported on a platform where the figures cannot be read, so a
+	// caller can distinguish "unknown" from "zero". Capacity is the raw filesystem
+	// total; the object layer derives usable capacity from the erasure ratio.
+	DiskInfo(ctx context.Context) (DiskInfo, error)
+
 	// MakeVol creates a volume (bucket directory). It returns ErrVolumeExists if
 	// the volume already exists.
 	MakeVol(ctx context.Context, volume string) error
@@ -79,6 +85,16 @@ type StorageAPI interface {
 	ListDir(ctx context.Context, volume, path string, count int) ([]string, error)
 }
 
+// DiskInfo reports a drive's underlying filesystem capacity in bytes. Free is the
+// space available for new data (to an unprivileged writer); Used is Total - Free of
+// the whole filesystem, which may exceed this drive's own footprint when the drive
+// shares a filesystem with others.
+type DiskInfo struct {
+	Total uint64
+	Free  uint64
+	Used  uint64
+}
+
 // VolInfo describes a volume (bucket) on a drive.
 type VolInfo struct {
 	Name    string
@@ -112,4 +128,9 @@ var (
 	ErrIsDirectory      = errors.New("storage: path is a directory")
 	ErrShortWrite       = errors.New("storage: short write")
 	ErrDriveOffline     = errors.New("storage: drive offline")
+
+	// ErrDiskInfoUnsupported is returned by DiskInfo on a platform where the
+	// filesystem capacity figures cannot be read, so a caller can show "unknown"
+	// rather than a misleading zero.
+	ErrDiskInfoUnsupported = errors.New("storage: disk info unsupported on this platform")
 )

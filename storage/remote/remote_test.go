@@ -151,6 +151,22 @@ func TestRemoteIsOnline(t *testing.T) {
 	}
 }
 
+func TestRemoteDiskInfo(t *testing.T) {
+	d := newRemoteDrive(t)
+	di, err := d.DiskInfo(context.Background())
+	if err != nil {
+		t.Fatalf("DiskInfo: %v", err)
+	}
+	// The figures the peer read off its real filesystem must survive the round
+	// trip intact: a non-zero total with consistent parts.
+	if di.Total == 0 {
+		t.Fatal("Total is zero across the wire")
+	}
+	if di.Free > di.Total || di.Used > di.Total {
+		t.Fatalf("inconsistent DiskInfo %+v", di)
+	}
+}
+
 // TestObjectLayerOverRemoteDrives is the headline: an erasure set built entirely
 // from remote drives stores and serves an object through the unchanged object
 // layer, proving local and remote drives are interchangeable.
