@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Command liteio runs the S3-compatible object server. It builds a single erasure
-// set over a list of local drive directories and serves the S3 REST API on the
-// configured address. This is the M1 single-node entrypoint; the distributed
-// cluster, admin API, and console arrive with later milestones.
+// Command liteio runs the S3-compatible object server. It builds an erasure set
+// over a list of local drive directories (or, in cluster mode, over endpoints that
+// may name remote hosts) and serves the S3 REST API on the configured address.
+// Alongside it the node serves the STS endpoint at the service root and, on a
+// second listener, the admin REST API and the web console, all backed by one IAM
+// identity store seeded with the root credential.
 package main
 
 import (
@@ -53,6 +55,16 @@ type config struct {
 	clusterKey      string
 	clusterCA       string
 	clusterServerNm string
+
+	// Admin and console. consoleAddress is the listener that serves the admin REST
+	// API and the web console; empty disables both. consoleRegion overrides the
+	// region the console signs admin calls under (empty keeps the default). When
+	// consoleInsecureCookie is set the session cookie drops its Secure attribute so
+	// the console works over plain HTTP for local testing; never set it in
+	// production, where the console must sit behind TLS.
+	consoleAddress        string
+	consoleRegion         string
+	consoleInsecureCookie bool
 }
 
 func run(argv []string) error {
@@ -66,8 +78,16 @@ func run(argv []string) error {
 		return err
 	}
 
-	store := auth.NewStaticStore(auth.Credentials{AccessKey: cfg.accessKey, SecretKey: cfg.secretKey})
-	var opts []s3.Option
+	// One identity store backs every authenticated surface: it verifies SigV4
+	// signatures, decides policy, issues and validates STS sessions, and answers the
+	// admin API. The store is seeded with the root credential; further users are
+	// created through the admin API or console.
+	store := auth.NewStore(cfg.accessKey, cfg.secretKey)
+	opts := []s3.Option{
+		s3.WithAuthorizer(store),
+		s3.WithSTS(store),
+		s3.WithSessionValidator(store),
+	}
 	if cfg.domain != "" {
 		opts = append(opts, s3.WithDomain(cfg.domain))
 	}
@@ -88,11 +108,31 @@ func run(argv []string) error {
 		sp.StartHealing(ctx)
 	}
 
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 	go func() {
 		slog.Info("liteio listening", "address", cfg.address)
 		errCh <- srv.ListenAndServe()
 	}()
+
+	// Serve the admin REST API and the web console on their own listener, sweeping
+	// expired console sessions in the background. Disabled when no address is set.
+	var consoleHTTP *http.Server
+	if cfg.consoleAddress != "" {
+		consoleHandler, csrv, cerr := buildConsole(cfg, store)
+		if cerr != nil {
+			return cerr
+		}
+		consoleHTTP = &http.Server{
+			Addr:              cfg.consoleAddress,
+			Handler:           consoleHandler,
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		startSweeping(ctx, csrv)
+		go func() {
+			slog.Info("liteio console listening", "address", cfg.consoleAddress, "insecure_cookie", cfg.consoleInsecureCookie)
+			errCh <- consoleHTTP.ListenAndServe()
+		}()
+	}
 
 	// In cluster mode, also serve the inter-node surface (drives + lock endpoint)
 	// so peers can reach this node. The listener is wrapped in mutual TLS when
@@ -127,6 +167,9 @@ func run(argv []string) error {
 		if clusterHTTP != nil {
 			_ = clusterHTTP.Shutdown(shutCtx)
 		}
+		if consoleHTTP != nil {
+			_ = consoleHTTP.Shutdown(shutCtx)
+		}
 		return srv.Shutdown(shutCtx)
 	case serr := <-errCh:
 		if errors.Is(serr, http.ErrServerClosed) {
@@ -153,6 +196,9 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.clusterKey, "cluster-key", os.Getenv("LITEIO_CLUSTER_KEY"), "node private key for inter-node mTLS (cluster mode)")
 	fs.StringVar(&cfg.clusterCA, "cluster-ca", os.Getenv("LITEIO_CLUSTER_CA"), "cluster CA bundle for inter-node mTLS (cluster mode)")
 	fs.StringVar(&cfg.clusterServerNm, "cluster-server-name", os.Getenv("LITEIO_CLUSTER_SERVER_NAME"), "SAN the peer certificates must carry (cluster mTLS)")
+	fs.StringVar(&cfg.consoleAddress, "console-address", envOr("LITEIO_CONSOLE_ADDRESS", ":9001"), "listen address for the admin API and web console; empty disables them")
+	fs.StringVar(&cfg.consoleRegion, "console-region", os.Getenv("LITEIO_CONSOLE_REGION"), "region the console signs admin calls under (default: us-east-1)")
+	fs.BoolVar(&cfg.consoleInsecureCookie, "console-insecure-cookie", os.Getenv("LITEIO_CONSOLE_INSECURE_COOKIE") == "1", "drop the Secure attribute on the console cookie for plain-HTTP local testing")
 	if err := fs.Parse(argv); err != nil {
 		return config{}, err
 	}
