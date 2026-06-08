@@ -195,6 +195,7 @@ the living source of truth and is updated as milestones land.
 | Console bucket browser (signed in-process S3 bridge, bucket list/create, object browse) | implemented (M5) |
 | Console object actions (upload, download, delete) | implemented (M5) |
 | Console streaming upload (unbuffered PUT, unsigned-payload signing, no size cap) | implemented (M5) |
+| Metrics registry (dependency-free Prometheus exposition: counters, gauges, histograms) | implemented (M5) |
 | Console identity management (users, policies, attach/detach over the admin API) | implemented (M5) |
 | Console groups and service accounts (members, per-user service accounts) | implemented (M5) |
 | Lifecycle / encryption / object lock | planned (M6) |
