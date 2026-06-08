@@ -641,6 +641,17 @@ func (s *erasureSet) deleteObject(ctx context.Context, bucket, object string, op
 
 	// Otherwise remove a specific version (or the null version) and reclaim its
 	// data. When no versions remain, the whole object directory is removed.
+
+	// Object Lock enforcement: a permanently deleted version must not be under
+	// retention or legal hold.
+	if lockSelected, _, lockOK := meta.QuorumVersion(existing, opts.VersionID, s.readQuorum()); lockOK {
+		if lockFI, lockFound := firstPresent(lockSelected); lockFound && !lockFI.Deleted {
+			if err := checkObjectLocked(lockFI.Metadata, s.now()); err != nil {
+				return ObjectInfo{}, err
+			}
+		}
+	}
+
 	targetID := opts.VersionID
 	writes := fanOut(ctx, len(s.drives), func(ctx context.Context, i int) (struct{}, error) {
 		if existing[i] == nil {

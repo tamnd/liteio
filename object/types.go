@@ -314,6 +314,14 @@ type ObjectLayer interface {
 	GetBucketLifecycle(ctx context.Context, bucket string) ([]byte, error)
 	DeleteBucketLifecycle(ctx context.Context, bucket string) error
 
+	// object lock: bucket-level configuration and per-version retention / legal hold
+	SetObjectLockConfiguration(ctx context.Context, bucket string, cfg ObjectLockConfig) error
+	GetObjectLockConfiguration(ctx context.Context, bucket string) (ObjectLockConfig, error)
+	SetObjectRetention(ctx context.Context, bucket, object, versionID, mode, retainUntil string) error
+	GetObjectRetention(ctx context.Context, bucket, object, versionID string) (mode, retainUntil string, err error)
+	SetObjectLegalHold(ctx context.Context, bucket, object, versionID, status string) error
+	GetObjectLegalHold(ctx context.Context, bucket, object, versionID string) (string, error)
+
 	// copy
 	CopyObject(ctx context.Context, srcBucket, srcObject, dstBucket, dstObject string, srcInfo ObjectInfo, opts ObjectOptions) (ObjectInfo, error)
 	CopyObjectPart(ctx context.Context, srcBucket, srcObject, dstBucket, dstObject, uploadID string, partID int, srcInfo ObjectInfo, rng *HTTPRangeSpec, opts ObjectOptions) (PartInfo, error)

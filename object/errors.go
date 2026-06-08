@@ -62,4 +62,19 @@ var (
 	// ErrSSECOnUnencrypted is returned when a request supplies an SSE-C key for an
 	// object that was written without SSE-C.
 	ErrSSECOnUnencrypted = errors.New("object: SSE-C key supplied for unencrypted object")
+	// ErrObjectLocked is returned when a delete or overwrite targets a version
+	// protected by Object Lock retention or a legal hold.
+	ErrObjectLocked = errors.New("object: object is locked")
+	// ErrObjectLockRequiresVersioning is returned when Object Lock is enabled on a
+	// bucket that does not have versioning turned on.
+	ErrObjectLockRequiresVersioning = errors.New("object: object lock requires versioning to be enabled")
+	// ErrNoSuchObjectLockConfiguration is returned by GetObjectLockConfiguration
+	// when the bucket has no lock configuration set.
+	ErrNoSuchObjectLockConfiguration = errors.New("object: no such object lock configuration")
+	// ErrComplianceRetentionCannotShorten is returned when a PUT Object Retention
+	// request attempts to move a COMPLIANCE retain-until date earlier.
+	ErrComplianceRetentionCannotShorten = errors.New("object: compliance retention date cannot be shortened")
+	// ErrNoSuchObjectRetention is returned by GetObjectRetention when the version
+	// has no retention set.
+	ErrNoSuchObjectRetention = errors.New("object: no such object retention")
 )
