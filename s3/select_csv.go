@@ -13,11 +13,11 @@ import (
 
 // csvInputCfg mirrors the S3 InputSerialization.CSV block.
 type csvInputCfg struct {
-	FileHeaderInfo   string // USE | IGNORE | NONE
-	RecordDelimiter  string // default "\n"
-	FieldDelimiter   string // default ","
-	QuoteCharacter   string // default `"`
-	EscapeCharacter  string // default `\`
+	FileHeaderInfo  string // USE | IGNORE | NONE
+	RecordDelimiter string // default "\n"
+	FieldDelimiter  string // default ","
+	QuoteCharacter  string // default `"`
+	EscapeCharacter string // default `\`
 }
 
 // csvOutputCfg mirrors the S3 OutputSerialization.CSV block.
