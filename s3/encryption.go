@@ -59,20 +59,38 @@ func (s *Server) deleteBucketEncryption(w http.ResponseWriter, r *http.Request, 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// parseSSES3Header inspects the x-amz-server-side-encryption header. When it
-// is "AES256" it sets opts.SSES3 and returns true. Other values (or absence)
-// leave opts unchanged.
+// parseSSES3Header inspects the x-amz-server-side-encryption header.
+//   - "AES256" sets opts.SSES3.
+//   - "aws:kms" sets opts.SSES3 and opts.SSEKMSKeyID (from the optional
+//     x-amz-server-side-encryption-aws:kms-key-id header, or empty for the
+//     bucket/server default key).
+//
+// Other values or absence leave opts unchanged.
 func parseSSES3Header(r *http.Request, opts *object.ObjectOptions) {
-	if r.Header.Get("x-amz-server-side-encryption") == "AES256" {
+	switch r.Header.Get("x-amz-server-side-encryption") {
+	case "AES256":
 		opts.SSES3 = true
+	case "aws:kms":
+		opts.SSES3 = true
+		opts.SSEKMSKeyID = r.Header.Get("x-amz-server-side-encryption-aws:kms-key-id")
 	}
 }
 
-// setSSES3ResponseHeaders adds the SSE-S3 algorithm header when the object
-// metadata indicates it was encrypted with SSE-S3.
+// setSSES3ResponseHeaders echoes the SSE algorithm header that was stored in
+// object metadata. It handles both SSE-S3 ("AES256") and SSE-KMS ("aws:kms").
 func setSSES3ResponseHeaders(w http.ResponseWriter, meta map[string]string) {
-	if alg, ok := meta["x-amz-server-side-encryption"]; ok && alg == "AES256" {
+	alg, ok := meta["x-amz-server-side-encryption"]
+	if !ok {
+		return
+	}
+	switch alg {
+	case "AES256":
 		w.Header().Set("x-amz-server-side-encryption", "AES256")
+	case "aws:kms":
+		w.Header().Set("x-amz-server-side-encryption", "aws:kms")
+		if keyID, has := meta["x-amz-server-side-encryption-aws:kms-key-id"]; has && keyID != "" {
+			w.Header().Set("x-amz-server-side-encryption-aws:kms-key-id", keyID)
+		}
 	}
 }
 

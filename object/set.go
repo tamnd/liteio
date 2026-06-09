@@ -315,8 +315,17 @@ func (s *erasureSet) putObject(ctx context.Context, bucket, object string, r *Pu
 	if s.kms != nil && !opts.SSES3 && opts.SSECKey == nil {
 		if encRaw, encErr := s.bucketEncryption(ctx, bucket); encErr == nil {
 			var encCfg BucketEncryptionConfig
-			if json.Unmarshal(encRaw, &encCfg) == nil && encCfg.Algorithm == "AES256" {
-				opts.SSES3 = true
+			if json.Unmarshal(encRaw, &encCfg) == nil {
+				switch encCfg.Algorithm {
+				case "AES256":
+					opts.SSES3 = true
+				case "aws:kms":
+					opts.SSES3 = true
+					// Prefer the per-request key; fall back to the bucket-level key.
+					if opts.SSEKMSKeyID == "" {
+						opts.SSEKMSKeyID = encCfg.KMSKeyID
+					}
+				}
 			}
 		}
 	}
@@ -381,17 +390,24 @@ func (s *erasureSet) putObject(ctx context.Context, bucket, object string, r *Pu
 		etag = hex.EncodeToString(cs[:])
 	}
 
-	// SSE-S3: AES-256-GCM envelope encryption with a server-managed DEK.
-	// Applies when the object has the SSE-S3 header set (opts.SSES3) or when
-	// the bucket default encryption mandates SSE-S3 and no per-request SSE-C
-	// key was supplied.
+	// SSE-S3 / SSE-KMS: AES-256-GCM envelope encryption with a server-managed DEK.
+	// Applies when the object has SSES3 set (either "AES256" or "aws:kms" header,
+	// or from bucket default encryption) and no per-request SSE-C key was supplied.
+	// Both algorithms use the same built-in KMS; the difference is only the
+	// algorithm label stored in metadata and reflected in the response header.
 	if s.kms != nil && opts.SSES3 && opts.SSECKey == nil {
 		ct, wrappedKey, nonce, encErr := sses3.Encrypt(s.kms, data)
 		if encErr != nil {
 			return ObjectInfo{}, fmt.Errorf("object: SSE-S3 encrypt: %w", encErr)
 		}
 		wB64, nB64 := sses3.EncodeMetadata(wrappedKey, nonce)
-		userMeta[sses3.MetaAlgorithm] = sses3.Algorithm
+		// Store "aws:kms" when the request specified SSE-KMS; otherwise "AES256".
+		if opts.SSEKMSKeyID != "" {
+			userMeta[sses3.MetaAlgorithm] = "aws:kms"
+			userMeta["x-amz-server-side-encryption-aws:kms-key-id"] = opts.SSEKMSKeyID
+		} else {
+			userMeta[sses3.MetaAlgorithm] = sses3.Algorithm
+		}
 		userMeta[sses3.MetaWrappedKey] = wB64
 		userMeta[sses3.MetaNonce] = nB64
 		data = ct
