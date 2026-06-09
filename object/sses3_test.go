@@ -184,6 +184,74 @@ func TestDeleteBucketEncryptionIdempotent(t *testing.T) {
 	}
 }
 
+// TestSSEKMSPutGetRoundTrip stores an object using the aws:kms algorithm
+// (SSEKMSKeyID set) and verifies correct metadata and plaintext round-trip.
+func TestSSEKMSPutGetRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	sp := newLayerWithKMS(t, 4, 2)
+	mustMakeBucket(t, sp, "bkt")
+
+	plaintext := []byte("SSE-KMS encryption test data")
+	info, err := sp.PutObject(ctx, "bkt", "obj",
+		NewPutReader(strings.NewReader(string(plaintext)), int64(len(plaintext))),
+		ObjectOptions{SSES3: true, SSEKMSKeyID: "my-key-alias"})
+	if err != nil {
+		t.Fatalf("PutObject SSE-KMS: %v", err)
+	}
+	if info.UserDefined["x-amz-server-side-encryption"] != "aws:kms" {
+		t.Errorf("algorithm: got %q, want aws:kms", info.UserDefined["x-amz-server-side-encryption"])
+	}
+	if info.UserDefined["x-amz-server-side-encryption-aws:kms-key-id"] != "my-key-alias" {
+		t.Errorf("kms key id: got %q, want my-key-alias",
+			info.UserDefined["x-amz-server-side-encryption-aws:kms-key-id"])
+	}
+
+	body := getBytes(t, sp, "bkt", "obj", ObjectOptions{})
+	if !bytes.Equal(body, plaintext) {
+		t.Fatalf("decrypted body mismatch: got %q, want %q", body, plaintext)
+	}
+}
+
+// TestSSEKMSDefaultEncryptionApplied verifies that when bucket default
+// encryption is set to aws:kms, PutObject stores the aws:kms algorithm label.
+func TestSSEKMSDefaultEncryptionApplied(t *testing.T) {
+	ctx := context.Background()
+	sp := newLayerWithKMS(t, 4, 2)
+	mustMakeBucket(t, sp, "bkt")
+
+	if err := sp.SetBucketEncryption(ctx, "bkt", BucketEncryptionConfig{
+		Algorithm: "aws:kms",
+		KMSKeyID:  "bucket-key",
+	}); err != nil {
+		t.Fatalf("SetBucketEncryption: %v", err)
+	}
+
+	plaintext := []byte("default kms encrypted")
+	_, err := sp.PutObject(ctx, "bkt", "obj",
+		NewPutReader(strings.NewReader(string(plaintext)), int64(len(plaintext))),
+		ObjectOptions{})
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	info, err := sp.GetObjectInfo(ctx, "bkt", "obj", ObjectOptions{})
+	if err != nil {
+		t.Fatalf("GetObjectInfo: %v", err)
+	}
+	if info.UserDefined["x-amz-server-side-encryption"] != "aws:kms" {
+		t.Errorf("algorithm: got %q, want aws:kms", info.UserDefined["x-amz-server-side-encryption"])
+	}
+	if info.UserDefined["x-amz-server-side-encryption-aws:kms-key-id"] != "bucket-key" {
+		t.Errorf("kms key id: got %q, want bucket-key",
+			info.UserDefined["x-amz-server-side-encryption-aws:kms-key-id"])
+	}
+
+	body := getBytes(t, sp, "bkt", "obj", ObjectOptions{})
+	if !bytes.Equal(body, plaintext) {
+		t.Errorf("body mismatch: got %q, want %q", body, plaintext)
+	}
+}
+
 // TestDefaultEncryptionAppliedOnPut verifies that when bucket default
 // encryption is set to AES256 and a KMS is configured, PutObject encrypts the
 // object even without an explicit SSES3 flag.

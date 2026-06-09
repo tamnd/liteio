@@ -67,10 +67,15 @@ type ObjectOptions struct {
 	ContentType string
 	// Range, when set, limits a GetObject to a byte range of the object.
 	Range *HTTPRangeSpec
-	// SSES3, when true, requests server-managed AES-256-GCM encryption (SSE-S3).
-	// Requires a KMS to be configured on the ServerPools. Ignored when SSECKey
-	// is also set (SSE-C takes precedence).
+	// SSES3, when true, requests server-managed AES-256-GCM encryption (SSE-S3
+	// or SSE-KMS). Requires a KMS to be configured on the ServerPools. Ignored
+	// when SSECKey is also set (SSE-C takes precedence).
 	SSES3 bool
+	// SSEKMSKeyID, when non-empty, identifies the KMS key requested via the
+	// x-amz-server-side-encryption-aws:kms-key-id header. Setting this also
+	// implies SSES3. The stored metadata algorithm is "aws:kms" rather than
+	// "AES256" so GET/HEAD responses echo the correct SSE algorithm back.
+	SSEKMSKeyID string
 	// SSECKey, when non-nil, is the 32-byte AES-256 customer key for SSE-C
 	// (server-side encryption with customer-provided keys). On a write it triggers
 	// AES-256-CTR encryption; on a read it decrypts and validates the key against
