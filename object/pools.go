@@ -137,6 +137,10 @@ func WithDispatcher(d *event.Dispatcher) Option {
 	return func(sp *ServerPools) { sp.dispatcher = d }
 }
 
+// SetDispatcher replaces the event dispatcher after construction. It is safe to
+// call before the pool starts serving requests. Nil disables event delivery.
+func (sp *ServerPools) SetDispatcher(d *event.Dispatcher) { sp.dispatcher = d }
+
 // now returns the current time, using the injected clock if set.
 func (sp *ServerPools) now() time.Time {
 	if sp.nowFn != nil {

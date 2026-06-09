@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/tamnd/liteio/auth"
+	"github.com/tamnd/liteio/event"
 	"github.com/tamnd/liteio/metrics"
 	"github.com/tamnd/liteio/object"
 	"github.com/tamnd/liteio/s3"
@@ -123,6 +124,15 @@ func run(argv []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Wire the event dispatcher so bucket notification configurations take effect:
+	// PutObject/DeleteObject calls fire events to registered webhook and queue
+	// targets. The dispatcher is shut down after the S3 listener drains.
+	var dispatcher *event.Dispatcher
+	if sp, ok := layer.(*object.ServerPools); ok {
+		dispatcher = event.NewDispatcher(nil)
+		sp.SetDispatcher(dispatcher)
+	}
+
 	// Drain the reactive-heal queue for the life of the process, repairing objects
 	// that reached quorum while a drive was briefly down.
 	if sp, ok := layer.(*object.ServerPools); ok {
@@ -196,7 +206,11 @@ func run(argv []string) error {
 		if consoleHTTP != nil {
 			_ = consoleHTTP.Shutdown(shutCtx)
 		}
-		return srv.Shutdown(shutCtx)
+		err := srv.Shutdown(shutCtx)
+		if dispatcher != nil {
+			dispatcher.Close()
+		}
+		return err
 	case serr := <-errCh:
 		if errors.Is(serr, http.ErrServerClosed) {
 			return nil
