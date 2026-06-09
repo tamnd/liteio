@@ -149,7 +149,7 @@ type Membership struct {
 // namespace locks across that quorum, so concurrent mutations of one key are
 // serialized cluster-wide. A zero Membership leaves the single-node in-process
 // lock in place.
-func BringUp(deploymentID [16]byte, specs []PoolSpec, opener Opener, m Membership) (*object.ServerPools, []Layout, error) {
+func BringUp(deploymentID [16]byte, specs []PoolSpec, opener Opener, m Membership, extraOpts ...object.Option) (*object.ServerPools, []Layout, error) {
 	if len(specs) == 0 {
 		return nil, nil, fmt.Errorf("cluster: bring-up needs at least one pool")
 	}
@@ -186,6 +186,7 @@ func BringUp(deploymentID [16]byte, specs []PoolSpec, opener Opener, m Membershi
 	if m.CacheNotifier != nil {
 		opts = append(opts, object.WithCacheNotifier(m.CacheNotifier))
 	}
+	opts = append(opts, extraOpts...)
 	sp, err := object.NewServerPools(deploymentID, configs, opts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("cluster: assemble object layer: %w", err)

@@ -188,6 +188,28 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			s.serveSTS(w, r, requestID, nil)
 			return
 		}
+		// A request with no Authorization header at all is an anonymous access
+		// attempt. When an Authorizer is installed it will consult the bucket
+		// policy and grant or deny accordingly; without one the server runs in
+		// authentication-only mode and every unsigned request is rejected.
+		if serr.Code == "MissingSecurityHeader" && s.authz != nil {
+			anonVR := &sign.VerifiedRequest{}
+			r = r.WithContext(context.WithValue(r.Context(), ctxKeyAccessKey{}, ""))
+			res := s.parseResource(r)
+			if aerr := s.authorize(r, anonVR, res); aerr.Code != "" {
+				writeError(w, requestID, r.URL.Path, aerr)
+				return
+			}
+			switch {
+			case res.bucket == "":
+				s.serveService(w, r, requestID)
+			case res.object == "":
+				s.serveBucket(w, r, requestID, res.bucket)
+			default:
+				s.serveObject(w, r, requestID, res.bucket, res.object)
+			}
+			return
+		}
 		writeError(w, requestID, r.URL.Path, APIError{Code: serr.Code, Description: serr.Message, HTTPStatus: signStatus(serr.Code)})
 		return
 	}

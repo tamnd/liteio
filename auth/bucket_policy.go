@@ -2,7 +2,10 @@
 
 package auth
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // Bucket policies are resource-attached access-control documents (spec 2020, doc
 // 08.3). They differ from identity policies in two ways: each statement carries a
@@ -94,7 +97,54 @@ func PublicReadPolicy(bucket string) Policy {
 			Effect:          Allow,
 			Actions:         stringSet{"s3:GetObject"},
 			Resources:       stringSet{ObjectARN(bucket, "*")},
+			Principal:       json.RawMessage(`"*"`),
 			parsedPrincipal: &principal{anyone: true},
 		}},
 	}
+}
+
+// UpsertObjectPublicRead returns p with a public-read Allow statement for the
+// named object added or replaced. Use the returned policy — p is not mutated.
+func UpsertObjectPublicRead(p Policy, bucket, key string) Policy {
+	arn := ObjectARN(bucket, key)
+	out := Policy{Version: p.Version, ID: p.ID}
+	for _, st := range p.Statements {
+		if isPublicReadObjectStmt(st, arn) {
+			continue
+		}
+		out.Statements = append(out.Statements, st)
+	}
+	out.Statements = append(out.Statements, Statement{
+		Effect:          Allow,
+		Actions:         stringSet{"s3:GetObject"},
+		Resources:       stringSet{arn},
+		Principal:       json.RawMessage(`"*"`),
+		parsedPrincipal: &principal{anyone: true},
+	})
+	return out
+}
+
+// RemoveObjectPublicRead returns p with the public-read statement for the named
+// object removed. Use the returned policy — p is not mutated.
+func RemoveObjectPublicRead(p Policy, bucket, key string) Policy {
+	arn := ObjectARN(bucket, key)
+	out := Policy{Version: p.Version, ID: p.ID}
+	for _, st := range p.Statements {
+		if isPublicReadObjectStmt(st, arn) {
+			continue
+		}
+		out.Statements = append(out.Statements, st)
+	}
+	return out
+}
+
+func isPublicReadObjectStmt(st Statement, arn string) bool {
+	if st.Effect != Allow || len(st.Resources) != 1 || st.Resources[0] != arn {
+		return false
+	}
+	if len(st.Actions) != 1 || st.Actions[0] != "s3:GetObject" {
+		return false
+	}
+	var who string
+	return json.Unmarshal(st.Principal, &who) == nil && who == "*"
 }

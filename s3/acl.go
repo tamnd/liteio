@@ -140,11 +140,63 @@ func (s *Server) getBucketAcl(w http.ResponseWriter, r *http.Request, requestID,
 
 // --- object ACL handlers -----------------------------------------------------
 
-// putObjectAcl handles PUT /bucket/key?acl. Object-level ACLs are a no-op in
-// liteio's PBAC model; the request is acknowledged with 200.
-func (s *Server) putObjectAcl(w http.ResponseWriter, r *http.Request, requestID, bucket, object string) {
+// putObjectAcl handles PUT /bucket/key?acl. For the public-read canned ACL it
+// adds a per-key Allow statement to the bucket policy granting anonymous
+// s3:GetObject on this object. For private it removes that statement.
+func (s *Server) putObjectAcl(w http.ResponseWriter, r *http.Request, requestID, bucket, key string) {
 	_, _ = io.Copy(io.Discard, r.Body)
+
+	canned := cannedACLFromHeader(r)
+	switch canned {
+	case "public-read":
+		p := s.loadOrEmptyPolicy(r, bucket)
+		p = auth.UpsertObjectPublicRead(p, bucket, key)
+		doc, err := json.Marshal(p)
+		if err != nil {
+			s.fail(w, requestID, r.URL.Path, err)
+			return
+		}
+		if err := s.layer.SetBucketPolicy(r.Context(), bucket, doc); err != nil {
+			s.fail(w, requestID, r.URL.Path, err)
+			return
+		}
+	case "private", "":
+		p := s.loadOrEmptyPolicy(r, bucket)
+		p = auth.RemoveObjectPublicRead(p, bucket, key)
+		if len(p.Statements) == 0 {
+			err := s.layer.DeleteBucketPolicy(r.Context(), bucket)
+			if err != nil && !errors.Is(err, object.ErrNoSuchBucketPolicy) {
+				s.fail(w, requestID, r.URL.Path, err)
+				return
+			}
+		} else {
+			doc, err := json.Marshal(p)
+			if err != nil {
+				s.fail(w, requestID, r.URL.Path, err)
+				return
+			}
+			if err := s.layer.SetBucketPolicy(r.Context(), bucket, doc); err != nil {
+				s.fail(w, requestID, r.URL.Path, err)
+				return
+			}
+		}
+	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// loadOrEmptyPolicy loads the bucket policy or returns an empty policy when
+// none exists yet. Errors other than missing-policy are silently swallowed and
+// produce an empty policy; the caller's subsequent write will catch real failures.
+func (s *Server) loadOrEmptyPolicy(r *http.Request, bucket string) auth.Policy {
+	doc, err := s.layer.GetBucketPolicy(r.Context(), bucket)
+	if err != nil {
+		return auth.Policy{Version: "2012-10-17"}
+	}
+	p, err := auth.ParseBucketPolicy(doc)
+	if err != nil {
+		return auth.Policy{Version: "2012-10-17"}
+	}
+	return p
 }
 
 // getObjectAcl handles GET /bucket/key?acl. It verifies the object exists, then

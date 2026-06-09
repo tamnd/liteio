@@ -3,6 +3,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"github.com/tamnd/liteio/cluster"
 	"github.com/tamnd/liteio/cluster/lock"
 	"github.com/tamnd/liteio/cluster/mtls"
+	"github.com/tamnd/liteio/kms"
 	"github.com/tamnd/liteio/object"
 	"github.com/tamnd/liteio/storage"
 	"github.com/tamnd/liteio/storage/local"
@@ -47,7 +49,7 @@ func buildSingleNode(cfg config) (object.ObjectLayer, error) {
 		}
 		drives = append(drives, d)
 	}
-	layer, err := object.NewSingleSet(deploymentSalt(cfg.deploymentID), drives, cfg.parity)
+	layer, err := object.NewSingleSet(deploymentSalt(cfg.deploymentID), drives, cfg.parity, kmsOption(cfg))
 	if err != nil {
 		return nil, fmt.Errorf("liteio: build object layer: %w", err)
 	}
@@ -120,6 +122,7 @@ func buildCluster(cfg config) (object.ObjectLayer, *cluster.Server, error) {
 			Lockers:       quorum,
 			CacheNotifier: cluster.CacheBroadcaster(peers, client),
 		},
+		kmsOption(cfg),
 	)
 	if err != nil {
 		return nil, nil, err
@@ -163,4 +166,14 @@ func clusterServerTLS(cfg config) (*tls.Config, error) {
 // clusterTLSConfigured reports whether the inter-node mTLS material is set.
 func clusterTLSConfigured(cfg config) bool {
 	return cfg.clusterCert != "" && cfg.clusterKey != "" && cfg.clusterCA != ""
+}
+
+// kmsOption derives a deterministic KMS master key from the deployment credentials
+// and returns an object.WithKMS option. The key is derived via SHA-256 so the same
+// deployment always produces the same master key, and previously encrypted objects
+// remain readable across restarts.
+func kmsOption(cfg config) object.Option {
+	seed := cfg.secretKey + "\x00" + cfg.deploymentID
+	key := sha256.Sum256([]byte(seed))
+	return object.WithKMS(kms.New(key))
 }
