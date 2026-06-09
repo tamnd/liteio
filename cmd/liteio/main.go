@@ -57,6 +57,11 @@ type config struct {
 	clusterCA       string
 	clusterServerNm string
 
+	// TLS for the S3 API listener. When both tlsCert and tlsKey are set the S3
+	// listener switches to HTTPS; the cert file must contain the full chain.
+	tlsCert string
+	tlsKey  string
+
 	// Admin and console. consoleAddress is the listener that serves the admin REST
 	// API and the web console; empty disables both. consoleRegion overrides the
 	// region the console signs admin calls under (empty keeps the default). When
@@ -126,8 +131,13 @@ func run(argv []string) error {
 
 	errCh := make(chan error, 3)
 	go func() {
-		slog.Info("liteio listening", "address", cfg.address)
-		errCh <- srv.ListenAndServe()
+		tls := cfg.tlsCert != "" && cfg.tlsKey != ""
+		slog.Info("liteio listening", "address", cfg.address, "tls", tls)
+		if tls {
+			errCh <- srv.ListenAndServeTLS(cfg.tlsCert, cfg.tlsKey)
+		} else {
+			errCh <- srv.ListenAndServe()
+		}
 	}()
 
 	// Serve the admin REST API and the web console on their own listener, sweeping
@@ -212,6 +222,8 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.clusterKey, "cluster-key", os.Getenv("LITEIO_CLUSTER_KEY"), "node private key for inter-node mTLS (cluster mode)")
 	fs.StringVar(&cfg.clusterCA, "cluster-ca", os.Getenv("LITEIO_CLUSTER_CA"), "cluster CA bundle for inter-node mTLS (cluster mode)")
 	fs.StringVar(&cfg.clusterServerNm, "cluster-server-name", os.Getenv("LITEIO_CLUSTER_SERVER_NAME"), "SAN the peer certificates must carry (cluster mTLS)")
+	fs.StringVar(&cfg.tlsCert, "tls-cert", os.Getenv("LITEIO_TLS_CERT"), "TLS certificate file for the S3 API listener (enables HTTPS when set with --tls-key)")
+	fs.StringVar(&cfg.tlsKey, "tls-key", os.Getenv("LITEIO_TLS_KEY"), "TLS private key file for the S3 API listener")
 	fs.StringVar(&cfg.consoleAddress, "console-address", envOr("LITEIO_CONSOLE_ADDRESS", ":9001"), "listen address for the admin API and web console; empty disables them")
 	fs.StringVar(&cfg.consoleRegion, "console-region", os.Getenv("LITEIO_CONSOLE_REGION"), "region the console signs admin calls under (default: us-east-1)")
 	fs.BoolVar(&cfg.consoleInsecureCookie, "console-insecure-cookie", os.Getenv("LITEIO_CONSOLE_INSECURE_COOKIE") == "1", "drop the Secure attribute on the console cookie for plain-HTTP local testing")
