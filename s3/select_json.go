@@ -35,9 +35,9 @@ func queryJSON(r io.Reader, in jsonInputCfg, out jsonOutputCfg, expr string, emi
 
 	switch strings.ToUpper(in.Type) {
 	case "DOCUMENT":
-		scanned, returned, err = queryJSONDocument(cr, parsed, out, emit)
+		_, returned, err = queryJSONDocument(cr, parsed, out, emit)
 	default: // LINES (default)
-		scanned, returned, err = queryJSONLines(cr, parsed, out, emit)
+		_, returned, err = queryJSONLines(cr, parsed, out, emit)
 	}
 	scanned = cr.n
 	return
