@@ -334,17 +334,33 @@ func (s *erasureSet) putObject(ctx context.Context, bucket, object string, r *Pu
 	if err != nil {
 		return ObjectInfo{}, err
 	}
-	encoded, err := erasure.EncodeData(coder, data)
-	if err != nil {
-		return ObjectInfo{}, err
+
+	total := s.dataShards() + s.parityShards()
+	shards := make([][]byte, total)
+	checksums := make([][]byte, total)
+
+	encodeIntoShards := func(src []byte) error {
+		if len(src) == 0 {
+			// Zero-byte objects: reedsolomon Split rejects empty input.
+			for i := range shards {
+				shards[i] = []byte{}
+				checksums[i] = erasure.HashShard(shards[i])
+			}
+			return nil
+		}
+		enc, encErr := erasure.EncodeData(coder, src)
+		if encErr != nil {
+			return encErr
+		}
+		for i, sh := range enc {
+			shards[i] = append([]byte(nil), sh...)
+			checksums[i] = erasure.HashShard(shards[i])
+		}
+		return nil
 	}
-	// EncodeData may alias one backing buffer; copy each shard so per-drive
-	// writes and checksums are independent.
-	shards := make([][]byte, len(encoded))
-	checksums := make([][]byte, len(encoded))
-	for i, sh := range encoded {
-		shards[i] = append([]byte(nil), sh...)
-		checksums[i] = erasure.HashShard(shards[i])
+
+	if err = encodeIntoShards(data); err != nil {
+		return ObjectInfo{}, err
 	}
 
 	sum := md5.Sum(data)
@@ -377,13 +393,8 @@ func (s *erasureSet) putObject(ctx context.Context, bucket, object string, r *Pu
 		data = encrypted
 		// Re-encode with the ciphertext (CTR mode preserves size, but we need
 		// fresh shards from the encrypted bytes).
-		encoded, err = erasure.EncodeData(coder, data)
-		if err != nil {
+		if err = encodeIntoShards(data); err != nil {
 			return ObjectInfo{}, err
-		}
-		for i, sh := range encoded {
-			shards[i] = append([]byte(nil), sh...)
-			checksums[i] = erasure.HashShard(shards[i])
 		}
 		// ETag is MD5 of ciphertext for SSE-C objects (opaque, not plaintext MD5).
 		cs := md5.Sum(data)
@@ -412,13 +423,8 @@ func (s *erasureSet) putObject(ctx context.Context, bucket, object string, r *Pu
 		userMeta[sses3.MetaNonce] = nB64
 		data = ct
 		// Re-encode shards from ciphertext (GCM adds a 16-byte tag).
-		encoded, err = erasure.EncodeData(coder, data)
-		if err != nil {
+		if err = encodeIntoShards(data); err != nil {
 			return ObjectInfo{}, err
-		}
-		for i, sh := range encoded {
-			shards[i] = append([]byte(nil), sh...)
-			checksums[i] = erasure.HashShard(shards[i])
 		}
 		etag = sses3.ETag(ct)
 	}
