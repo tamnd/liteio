@@ -13,11 +13,11 @@ import (
 
 // csvInputCfg mirrors the S3 InputSerialization.CSV block.
 type csvInputCfg struct {
-	FileHeaderInfo   string // USE | IGNORE | NONE
-	RecordDelimiter  string // default "\n"
-	FieldDelimiter   string // default ","
-	QuoteCharacter   string // default `"`
-	EscapeCharacter  string // default `\`
+	FileHeaderInfo  string // USE | IGNORE | NONE
+	RecordDelimiter string // default "\n"
+	FieldDelimiter  string // default ","
+	QuoteCharacter  string // default `"`
+	EscapeCharacter string // default `\`
 }
 
 // csvOutputCfg mirrors the S3 OutputSerialization.CSV block.
@@ -58,9 +58,7 @@ func queryCSV(r io.Reader, in csvInputCfg, out csvOutputCfg, expr string, emit f
 	if len(in.FieldDelimiter) > 0 {
 		csvr.Comma = rune(in.FieldDelimiter[0])
 	}
-	if len(in.QuoteCharacter) > 0 {
-		// encoding/csv always uses '"'; we only support the default.
-	}
+	// encoding/csv always uses '"' as quote character; non-default values are not supported.
 	csvr.LazyQuotes = true
 	csvr.FieldsPerRecord = -1 // variable
 

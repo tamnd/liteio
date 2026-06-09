@@ -40,9 +40,9 @@ type exprNode struct {
 // parsedSelect is the result of parseSelectExpr.
 type parsedSelect struct {
 	cols    []selectCol // nil = SELECT *
-	where   *exprNode  // nil = no filter
-	limit   int64      // 0 = no limit
-	outJSON bool       // true when OutputSerialization is JSON
+	where   *exprNode   // nil = no filter
+	limit   int64       // 0 = no limit
+	outJSON bool        // true when OutputSerialization is JSON
 }
 
 // parseSelectExpr does a best-effort parse of an S3 Select SQL expression.

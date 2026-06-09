@@ -123,6 +123,9 @@ func EncodeData(c Coder, data []byte) ([][]byte, error) {
 // returns the joined object bytes. It does not verify bitrot checksums; callers
 // that have checksums should verify and nil out bad shards first (see VerifyShard).
 func DecodeData(c Coder, shards [][]byte, outSize int) ([]byte, error) {
+	if outSize == 0 {
+		return []byte{}, nil
+	}
 	present := 0
 	for _, s := range shards {
 		if s != nil {

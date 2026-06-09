@@ -13,11 +13,11 @@ import (
 
 // selectRequest mirrors the SelectObjectContentRequest XML body.
 type selectRequest struct {
-	XMLName              xml.Name             `xml:"SelectObjectContentRequest"`
-	Expression           string               `xml:"Expression"`
-	ExpressionType       string               `xml:"ExpressionType"`
-	InputSerialization   selectInputSerial    `xml:"InputSerialization"`
-	OutputSerialization  selectOutputSerial   `xml:"OutputSerialization"`
+	XMLName             xml.Name           `xml:"SelectObjectContentRequest"`
+	Expression          string             `xml:"Expression"`
+	ExpressionType      string             `xml:"ExpressionType"`
+	InputSerialization  selectInputSerial  `xml:"InputSerialization"`
+	OutputSerialization selectOutputSerial `xml:"OutputSerialization"`
 }
 
 type selectInputSerial struct {
@@ -26,7 +26,7 @@ type selectInputSerial struct {
 }
 
 type selectCSVInput struct {
-	FileHeaderInfo  string `xml:"FileHeaderInfo"`  // USE | IGNORE | NONE
+	FileHeaderInfo  string `xml:"FileHeaderInfo"` // USE | IGNORE | NONE
 	RecordDelimiter string `xml:"RecordDelimiter"`
 	FieldDelimiter  string `xml:"FieldDelimiter"`
 	QuoteCharacter  string `xml:"QuoteCharacter"`
