@@ -129,6 +129,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleCORSPreflight(w, r)
 		return
 	}
+	// Health-check endpoints are always public and require no authentication.
+	if r.Method == http.MethodGet && (r.URL.Path == "/minio/health/live" || r.URL.Path == "/minio/health/ready") {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	start := s.now()
 	if s.metrics == nil {
 		sr := newStatusRecorder(w)
