@@ -203,9 +203,45 @@ func NewServerPools(deploymentID [16]byte, pools []PoolConfig, opts ...Option) (
 				capturedSet.idx = idx
 			}
 		}
+		// Build the in-memory listing index. If a bbolt index is available, seed
+		// it from bbolt so listings are warm immediately after restart without a
+		// full filesystem scan. The in-memory index is what ListObjectsV2 uses.
+		capturedSet.mem = newInmemIndex()
+		if capturedSet.idx != nil {
+			seedInmemFromBbolt(capturedSet.mem, capturedSet.idx)
+		}
 		capturedSet.objCache = newObjectCache()
 	}
 	return sp, nil
+}
+
+// seedInmemFromBbolt loads all entries from the persistent bbolt index into
+// the in-memory listing index so ListObjectsV2 is warm immediately after
+// restart. A failure is silent: the in-memory index starts empty and is
+// populated incrementally by subsequent PUTs.
+func seedInmemFromBbolt(mem *inmemIndex, idx *index.Index) {
+	buckets, err := idx.ListBuckets()
+	if err != nil {
+		return
+	}
+	for _, bucket := range buckets {
+		keys, entries, err := idx.AllEntries(bucket)
+		if err != nil || len(keys) == 0 {
+			continue
+		}
+		mem.loadFromBbolt(bucket, keys, entries, func(bkt, key string, e index.Entry) ObjectInfo {
+			return ObjectInfo{
+				Bucket:      bkt,
+				Name:        key,
+				ETag:        e.ETag,
+				Size:        e.Size,
+				ModTime:     e.ModTime,
+				ContentType: e.ContentType,
+				VersionID:   e.VersionID,
+				UserDefined: e.UserDefined,
+			}
+		})
+	}
 }
 
 // formatSetIdx returns a stable suffix used to distinguish per-set index
@@ -568,6 +604,13 @@ func afterUploadMarker(up MultipartUpload, keyMarker, uploadIDMarker string) boo
 // --- listing (union across sets) -----------------------------------------
 
 // ListObjectsV2 implements ObjectLayer: it unions object keys across sets and pages them.
+//
+// Fast path: when every set has a populated persistent index, union the
+// ObjectInfo slices directly — zero per-object disk reads. This is the
+// post-PR-69 steady-state path for any bucket that has been written to.
+//
+// Fallback: walk keys from disk (or metacache) and resolve metadata with
+// getObjectInfo, as before.
 func (sp *ServerPools) ListObjectsV2(ctx context.Context, bucket, prefix, token, startAfter, delim string, maxKeys int, _ bool) (ListObjectsV2Info, error) {
 	if _, err := sp.GetBucketInfo(ctx, bucket); err != nil {
 		return ListObjectsV2Info{}, err
@@ -575,6 +618,37 @@ func (sp *ServerPools) ListObjectsV2(ctx context.Context, bucket, prefix, token,
 	if maxKeys <= 0 {
 		maxKeys = 1000
 	}
+
+	// Fast path: when there is exactly one set with a warm in-memory index,
+	// serve the listing entirely from memory — zero disk reads, lock held only
+	// for the duration of the key scan (typically <1 ms for 10 K objects).
+	// Multi-set deployments fall through to the union path below so that
+	// objects spread across sets are merged correctly.
+	sets := sp.allSets()
+	if len(sets) == 1 && sets[0].mem != nil {
+		if res, ok := sets[0].mem.ListObjects(bucket, prefix, token, startAfter, delim, maxKeys); ok {
+			return res, nil
+		}
+	}
+
+	// Multi-set or cold index: try the index-backed fast path (union + no disk).
+	if len(sets) > 1 {
+		var indexOIs []ObjectInfo
+		allIndexed := true
+		for _, set := range sets {
+			ois, ok := set.listFromIndex(bucket)
+			if !ok {
+				allIndexed = false
+				break
+			}
+			indexOIs = append(indexOIs, ois...)
+		}
+		if allIndexed && len(indexOIs) > 0 {
+			return applyListingFromOIs(indexOIs, prefix, token, startAfter, delim, maxKeys), nil
+		}
+	}
+
+	// Fallback: key-only walk + per-key getObjectInfo.
 	keys, err := sp.bucketKeys(ctx, bucket)
 	if err != nil {
 		return ListObjectsV2Info{}, err
