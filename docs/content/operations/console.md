@@ -1,53 +1,51 @@
 ---
 title: "Web console"
-description: "The embedded web console for cluster management."
+description: "The built-in web console for cluster management."
 weight: 30
 ---
 
-liteio ships an embedded web console on the console port (default `:9001`).
-Sign in with any IAM user or the root credential. The console is a single-page
-application served directly from the binary — no separate process needed.
+The console is a single-page app served straight from the binary on the console
+port, default `:9001`. There is no second process to deploy. Sign in with the
+root credential or any IAM user.
 
-## Features
+## What it does
 
-**Cluster dashboard** — topology map, drive reachability, per-set quorum and
-availability, raw and usable capacity, and the reactive heal queue depth.
+**Cluster dashboard.** Topology map, drive reachability, per-set quorum and
+availability, raw and usable capacity, and the heal queue depth, all live.
 
-**Bucket browser** — create, delete, and browse buckets. Navigate the object
-tree, upload files, download objects, and delete individual objects or
-prefixes.
+**Bucket browser.** Create and delete buckets, walk the object tree, upload,
+download, and delete objects or whole prefixes.
 
-**Identity management** — create users, set passwords, attach policies. Create
-groups and assign members. Create per-user service accounts with narrowed
-policies.
+**Identity.** Create users, set passwords, attach policies. Build groups and add
+members. Mint per-user service accounts with narrowed policies.
 
-**Policy editor** — create and edit IAM policies with a JSON editor. Attach
-and detach policies from users and groups.
+**Policy editor.** Write and edit IAM policies in a JSON editor, then attach or
+detach them from users and groups.
 
-**Metrics** — live charts for request rate, error rate, latency percentiles,
-and cluster health. The data comes from the same Prometheus endpoint the
-scraper uses.
+**Metrics.** Live charts for request rate, error rate, latency percentiles, and
+cluster health, drawn from the same data the Prometheus endpoint serves.
 
-## Security
+## How it stays safe
 
-The console uses server-side sessions. The secret key is never stored in the
-browser. Every admin action is signed in-process against the admin API using
-the session-bound credential. Behind plain HTTP for local testing, add
-`--console-insecure-cookie`; in production the console must sit behind TLS.
+The console uses server-side sessions. Your secret key never reaches the browser.
+Every admin action is signed in-process against the admin API with the
+session's credential, so there is nothing sensitive sitting in client-side
+storage to steal.
 
-## Accessing the console
+For local testing over plain HTTP, add `--console-insecure-cookie` so the
+session cookie is accepted without TLS. In production the console belongs behind
+TLS, and without that flag it insists on it.
+
+## Reaching it
 
 ```
 http://localhost:9001
 ```
 
-Sign in with:
-- Username: the access key (e.g. `admin`)
-- Password: the secret key (e.g. `changeme`)
+Sign in with the access key as the username and the secret key as the password.
 
-## TLS for the console
-
-Pass separate TLS flags for the console listener:
+To terminate TLS in liteio, give the console listener its own certificate, which
+can be the same one the S3 listener uses:
 
 ```bash
 liteio \
@@ -55,5 +53,3 @@ liteio \
   --console-tls-cert /etc/liteio/server.crt \
   --console-tls-key  /etc/liteio/server.key
 ```
-
-You can share the same certificate as the S3 API listener.

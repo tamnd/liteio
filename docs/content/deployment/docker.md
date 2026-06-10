@@ -4,18 +4,17 @@ description: "Run liteio in a container."
 weight: 30
 ---
 
-liteio ships a minimal Docker image built from a scratch base — just the static
-binary and no shell. The image is published to the GitHub Container Registry.
-
-## Pull the image
+The image is a `scratch` base with just the static binary and no shell, so it is
+small and has almost no attack surface. It is published to the GitHub Container
+Registry.
 
 ```bash
 docker pull ghcr.io/tamnd/liteio:latest
 ```
 
-## Single-node container
+## Single node
 
-Mount host directories as drives:
+Mount one host directory per drive and pass the config as environment:
 
 ```bash
 docker run -d \
@@ -32,7 +31,7 @@ docker run -d \
   ghcr.io/tamnd/liteio:latest
 ```
 
-## Docker Compose
+## Compose
 
 ```yaml
 services:
@@ -59,13 +58,15 @@ volumes:
   drive4:
 ```
 
-## Build the image locally
+> Use four separate volumes, not four subdirectories of one. liteio treats each
+> as an independent drive, and parity only protects you if the drives can fail
+> independently.
 
-The Dockerfile is in the repo root:
+## Build the image yourself
+
+The `Dockerfile` lives in the repo root. It is a multi-stage build that compiles
+the binary and copies it onto `scratch`, producing an image under 20 MB:
 
 ```bash
 docker build -t liteio:local .
 ```
-
-The build uses a multi-stage Go build and produces a scratch-based image. The
-final image is typically under 20 MB.

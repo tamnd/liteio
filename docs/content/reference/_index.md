@@ -1,10 +1,10 @@
 ---
 title: "Reference"
 linkTitle: "Reference"
-description: "Compatibility matrix, error codes, and migration from MinIO."
+description: "Compatibility matrix, error codes, and migrating from MinIO."
 weight: 60
 ---
 
-Detailed reference material: what S3 operations are implemented and to what
-fidelity, the S3 error code catalog, and a migration guide from MinIO and
-other compatible stores.
+The precise stuff: which S3 operations are implemented and how faithfully, the
+error codes liteio returns and what they mean, and a step-by-step move from
+MinIO or another S3-compatible store.

@@ -1,11 +1,12 @@
 ---
 title: "Deployment"
 linkTitle: "Deployment"
-description: "Run liteio in production: single node, distributed cluster, and container."
+description: "Run liteio in production: one node, a cluster, or a container."
 weight: 20
 featured: true
 ---
 
-How to run liteio in production. A single-node deployment takes five minutes.
-A distributed cluster requires coordinating multiple nodes but follows the same
-binary with different flags. Both modes use identical S3 and console APIs.
+The same binary runs a laptop demo and a multi-node cluster; only the flags
+change. Start with a single node, add nodes when you need fault tolerance or
+more throughput, and reach for the container images when you want liteio in
+Docker or Compose.

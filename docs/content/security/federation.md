@@ -1,19 +1,20 @@
 ---
 title: "Federation"
-description: "OIDC, LDAP, and certificate-based identity federation via STS."
+description: "Log in through OIDC, LDAP, or client certificates."
 weight: 30
 ---
 
-liteio can issue STS temporary credentials to identities authenticated by an
-external provider. Configure one or more identity providers in the admin API;
-the STS endpoint handles the exchange.
+liteio can issue temporary credentials to identities that already live in an
+external system, so you do not have to mint a liteio user for every person or
+service. Register a provider through the admin API, and the STS endpoint handles
+the exchange.
 
-## OIDC / web identity
+## OIDC
 
-Allow users from any OIDC provider (Keycloak, Auth0, Okta, Google, ...) to
-assume a role and get S3 access.
+Let anyone in an OIDC provider (Keycloak, Auth0, Okta, Google) assume a role and
+get S3 access.
 
-### Configure the OIDC provider
+Register the provider:
 
 ```bash
 curl -X POST http://localhost:9001/minio/v1/idp/openid \
@@ -29,7 +30,7 @@ curl -X POST http://localhost:9001/minio/v1/idp/openid \
   }'
 ```
 
-### Exchange a JWT for STS credentials
+Trade a JWT for credentials:
 
 ```bash
 curl -X POST "http://localhost:9000/?Action=AssumeRoleWithWebIdentity&Version=2011-06-15" \
@@ -49,15 +50,15 @@ curl -X POST "http://localhost:9000/?Action=AssumeRoleWithWebIdentity&Version=20
 </AssumeRoleWithWebIdentityResponse>
 ```
 
-Use those three values (access key, secret key, session token) to sign S3
-requests as the federated identity.
+Sign subsequent S3 requests with those three values, and they expire on their
+own at the time shown.
 
 ## LDAP
 
-Bind against an LDAP directory to authenticate users and map group membership
-to IAM policies.
+Bind against a directory to authenticate users and turn their group membership
+into a policy.
 
-### Configure LDAP
+Register the directory:
 
 ```bash
 curl -X POST http://localhost:9001/minio/v1/idp/ldap \
@@ -74,22 +75,22 @@ curl -X POST http://localhost:9001/minio/v1/idp/ldap \
   }'
 ```
 
-### Assume role with LDAP
+Assume a role with a username and password:
 
 ```bash
 curl -X POST "http://localhost:9000/?Action=AssumeRoleWithLDAPIdentity&Version=2011-06-15" \
   -d "LDAPUsername=alice&LDAPPassword=alicepw&DurationSeconds=3600"
 ```
 
-The policy for the session is the union of IAM policies attached to any group
-the user belongs to.
+The session's policy is the union of the policies attached to every group the
+user belongs to.
 
-## Certificate federation
+## Client certificates
 
-Clients with X.509 certificates signed by a trusted CA can assume a role without
-a password.
+A client holding an X.509 certificate signed by a trusted CA can assume a role
+with no password at all.
 
-### Configure the certificate CA
+Register the CA:
 
 ```bash
 curl -X POST http://localhost:9001/minio/v1/idp/cert \
@@ -101,11 +102,12 @@ curl -X POST http://localhost:9001/minio/v1/idp/cert \
   }'
 ```
 
-### Assume role with certificate
-
 Present the certificate in the TLS handshake:
 
 ```bash
 curl -X POST "https://localhost:9000/?Action=AssumeRoleWithCertificate&Version=2011-06-15" \
   --cert client.crt --key client.key --cacert cluster-ca.crt
 ```
+
+liteio validates the chain, reads the subject field named in `subjectClaim`, and
+maps it to the role's policy.

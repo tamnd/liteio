@@ -1,10 +1,10 @@
 ---
 title: "Objects"
-description: "Upload, download, stat, and delete objects."
+description: "Upload, download, stat, copy, and delete objects."
 weight: 20
 ---
 
-## Upload (PUT)
+## Upload
 
 ```bash
 aws s3api put-object \
@@ -15,15 +15,15 @@ aws s3api put-object \
 ```
 
 ```json
-{
-    "ETag": "\"d41d8cd98f00b204e9800998ecf8427e\""
-}
+{ "ETag": "\"d41d8cd98f00b204e9800998ecf8427e\"" }
 ```
 
-The `ETag` is the MD5 hex digest of the object body, quoted as required by the
-S3 spec.
+The `ETag` is the MD5 of the body, quoted, exactly as the S3 spec wants it.
 
-### Upload with metadata
+### With metadata
+
+User metadata rides along as `x-amz-meta-*` headers and comes back on GET and
+HEAD:
 
 ```bash
 aws s3api put-object \
@@ -35,10 +35,7 @@ aws s3api put-object \
   --profile liteio
 ```
 
-User-defined metadata is stored as `x-amz-meta-*` headers and returned on GET
-and HEAD.
-
-### Upload with tagging
+### With tags
 
 ```bash
 aws s3api put-object \
@@ -51,21 +48,15 @@ aws s3api put-object \
 
 ### Presigned upload
 
-Generate a presigned PUT URL valid for one hour:
+Hand a time-limited PUT URL to a client that has no credentials:
 
 ```bash
-aws s3 presign s3://my-bucket/upload.bin \
-  --expires-in 3600 \
-  --profile liteio
-```
-
-Use the URL with any HTTP client:
-
-```bash
+aws s3 presign s3://my-bucket/upload.bin --expires-in 3600 --profile liteio
+# Then, from anywhere:
 curl -X PUT --upload-file upload.bin "$PRESIGNED_URL"
 ```
 
-## Download (GET)
+## Download
 
 ```bash
 aws s3api get-object \
@@ -75,43 +66,25 @@ aws s3api get-object \
   --profile liteio
 ```
 
-```json
-{
-    "ContentType": "application/octet-stream",
-    "ContentLength": 1234,
-    "ETag": "\"d41d8cd98f00b204e9800998ecf8427e\""
-}
-```
+### A byte range
 
-### Range GET
-
-Download a byte range (useful for large files):
+Useful for resuming a transfer or reading a slice of a large file. liteio
+answers with `206 Partial Content` and a `Content-Range` header:
 
 ```bash
 aws s3api get-object \
   --bucket my-bucket \
   --key large-file.bin \
   --range 'bytes=0-1048575' \
-  output-part0.bin \
+  part0.bin \
   --profile liteio
 ```
 
-liteio returns `206 Partial Content` with the `Content-Range` header.
+### Conditionally
 
-### Conditional GET
-
-liteio supports all four conditional headers:
+All four conditional headers work. Fetch only if the object changed:
 
 ```bash
-# Only download if the ETag matches (If-Match).
-aws s3api get-object \
-  --bucket my-bucket \
-  --key file.txt \
-  output.txt \
-  --if-match '"d41d8cd98f00b204e9800998ecf8427e"' \
-  --profile liteio
-
-# Only download if the object has changed (If-None-Match).
 aws s3api get-object \
   --bucket my-bucket \
   --key file.txt \
@@ -120,23 +93,16 @@ aws s3api get-object \
   --profile liteio
 ```
 
-`If-Modified-Since` and `If-Unmodified-Since` are also supported.
+A matching `If-None-Match` returns `304 Not Modified`. `If-Match`,
+`If-Modified-Since`, and `If-Unmodified-Since` behave the same way they do on
+AWS.
 
-### Presigned download
+## Stat (HEAD)
 
-```bash
-aws s3 presign s3://my-bucket/photo.jpg \
-  --expires-in 3600 \
-  --profile liteio
-```
-
-## HEAD (metadata only)
+Metadata without the body:
 
 ```bash
-aws s3api head-object \
-  --bucket my-bucket \
-  --key file.txt \
-  --profile liteio
+aws s3api head-object --bucket my-bucket --key file.txt --profile liteio
 ```
 
 ```json
@@ -151,18 +117,15 @@ aws s3api head-object \
 ## Delete
 
 ```bash
-aws s3api delete-object \
-  --bucket my-bucket \
-  --key file.txt \
-  --profile liteio
+aws s3api delete-object --bucket my-bucket --key file.txt --profile liteio
 ```
 
-With versioning enabled, delete creates a delete marker. Pass `--version-id` to
-permanently remove a specific version.
+With versioning on, this writes a delete marker. Pass `--version-id` to remove a
+specific version for good.
 
-## Batch delete
+## Delete in bulk
 
-Delete up to 1,000 objects in one request:
+Up to 1,000 keys in one round trip:
 
 ```bash
 aws s3api delete-objects \
@@ -174,16 +137,17 @@ aws s3api delete-objects \
 ```json
 {
     "Deleted": [
-        {"Key": "a.txt"},
-        {"Key": "b.txt"},
-        {"Key": "c.txt"}
+        { "Key": "a.txt" },
+        { "Key": "b.txt" },
+        { "Key": "c.txt" }
     ]
 }
 ```
 
 ## Copy
 
-Copy an object within a bucket or between buckets:
+Server-side, within a bucket or across buckets, with no round trip through the
+client:
 
 ```bash
 aws s3api copy-object \
@@ -202,7 +166,7 @@ aws s3api copy-object \
 }
 ```
 
-## Object tagging
+## Object tags
 
 ```bash
 aws s3api put-object-tagging \
@@ -211,6 +175,6 @@ aws s3api put-object-tagging \
   --tagging 'TagSet=[{Key=env,Value=prod}]' \
   --profile liteio
 
-aws s3api get-object-tagging --bucket my-bucket --key file.txt --profile liteio
+aws s3api get-object-tagging    --bucket my-bucket --key file.txt --profile liteio
 aws s3api delete-object-tagging --bucket my-bucket --key file.txt --profile liteio
 ```

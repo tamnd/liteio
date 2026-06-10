@@ -1,54 +1,54 @@
 ---
 title: "Healing"
-description: "How liteio detects and repairs degraded objects."
+description: "How liteio finds and repairs degraded objects."
 weight: 20
 ---
 
-liteio heals data automatically. When a drive goes offline, the reactive healer
-queues every object on that drive for reconstruction. When the drive returns, the
-reconstructed shards are written back. No manual intervention is needed for
-typical drive failures.
+liteio repairs itself. When a drive fails, every object on it is queued for
+reconstruction, and the rebuilt shards are written back when a replacement drive
+appears. A routine drive failure needs no operator action beyond swapping the
+disk.
 
 ## Reactive healing
 
-When a read or write detects a missing or corrupt shard, the object is queued in
-the MRF (Most Recently Failed) heal queue. A background goroutine drains the
-queue, reconstructs each object from its surviving shards, and writes the
-repaired shard back to the drive.
+When a read or write notices a missing or corrupt shard, the object goes into the
+MRF queue, where MRF is "most recently failed." A background worker drains the
+queue, rebuilds each object from the shards that survived, and writes the
+repaired shard back. The depth of that queue is in
+`liteio_cluster_heal_queue_depth` and on the console dashboard, so you can watch
+a repair finish.
 
-The queue depth is reported in the `liteio_cluster_heal_queue_depth` metric and
-visible in the console cluster dashboard.
+## Bitrot
 
-## Bitrot detection
+Every shard carries a HighwayHash-256 checksum that is verified on every read. A
+mismatch does two things at once: the read still succeeds, served from the other
+shards, and the bad shard is queued for repair. Silent corruption never reaches
+the client.
 
-Every shard carries a HighwayHash-256 checksum. The checksum is verified on
-every read. A checksum mismatch triggers both an error to the client (the
-object is reconstructed from other shards) and an immediate healing entry.
+## Reading through a failure
 
-## Read reconstruction
+If the number of offline drives in a set is within the parity level, reads
+reconstruct the missing shards on the fly. The client gets the right bytes, the
+event is logged, and the object is queued for repair. The client never sees the
+degradation.
 
-If the number of offline drives in an erasure set is at or below the parity
-level (that is, enough data shards survive), reads transparently reconstruct
-the missing shards. The client receives the correct object; the event is logged
-and the object is queued for repair.
+Past that point, when a set is below read quorum, reads return `503 SlowDown` and
+writes are refused until drives come back. liteio would rather stall than hand
+back data it cannot verify.
 
-If too many drives are offline (below read quorum), the read fails with
-`503 SlowDown`. Writes are also blocked until quorum is restored.
+## Replacing a drive
 
-## Drive replacement
+1. Swap the dead disk and mount it at the same path.
+2. liteio spots the empty drive on startup and starts healing onto it.
+3. Watch `liteio_cluster_heal_queue_depth` fall to zero. That is "done."
 
-1. Replace the failed physical drive and mount it at the same path.
-2. liteio detects the new empty drive on startup and begins healing.
-3. Monitor progress: `liteio_cluster_heal_queue_depth` drops to zero when
-   healing is complete.
-4. The console cluster view shows each drive's health status and per-set
-   availability.
+The console shows per-drive health and per-set availability throughout, so you
+can confirm the set is whole again before you walk away.
 
-## Proactive healing
+## Proactive scanning
 
-A periodic scanner walks all objects across all erasure sets, verifies their
-checksums, and repairs any degradation found. This catches silent bitrot on
-drives that remain online but return corrupt data.
-
-The scanner runs at low priority to avoid impacting request latency. Its
-frequency can be tuned through the admin API.
+A low-priority scanner walks every object across every set on a schedule,
+re-checks the checksums, and repairs anything it finds. This is what catches
+bitrot on a drive that is still online but quietly returning bad data, the
+failure mode that reactive healing alone would miss. It runs below request
+traffic so it does not show up in your latency.

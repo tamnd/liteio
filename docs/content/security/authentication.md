@@ -1,74 +1,68 @@
 ---
 title: "Authentication"
-description: "SigV4 request signing and presigned URL authentication."
+description: "SigV4 signing, presigned URLs, and temporary credentials."
 weight: 10
 ---
 
-Every request to liteio must carry a valid SigV4 signature or be denied with
-`403 AccessDenied`. liteio implements the same signature algorithm as AWS S3, so
-unmodified S3 clients work without any adapter.
+Every request is signed with SigV4 or it is denied. liteio runs the same
+signature algorithm as AWS S3, so your existing clients sign correctly with no
+changes.
 
-## How SigV4 works
+## How a request is trusted
 
-The client hashes the request method, URL, headers, and body (or a streaming
-trailer), signs the hash with an HMAC-SHA256 key derived from the secret key,
-and includes the signature in either the `Authorization` header or the query
-string (presigned).
-
-liteio verifies the signature and checks the request timestamp. Requests older
-than 15 minutes are rejected with `RequestTimeTooSkewed`.
+The client hashes the method, path, headers, and body, signs that hash with a
+key derived from the secret key, and attaches the signature in the
+`Authorization` header or the query string. liteio recomputes the signature and
+checks the timestamp. A request more than 15 minutes old is rejected with
+`RequestTimeTooSkewed`, which is what stops a captured request from being
+replayed later.
 
 ## Credentials
 
-The root credential is set at server start with `--access-key` and
-`--secret-key`. Use it to bootstrap the IAM store — create users with less
-privilege and use those for day-to-day operations.
-
-IAM users and service accounts have their own access key pairs managed through
-the admin API or the console.
+`--access-key` and `--secret-key` set the root credential at startup. Use it to
+bootstrap, then create scoped-down IAM users and stop using root for day-to-day
+traffic. IAM users and service accounts each carry their own key pair, managed
+through the admin API or the console.
 
 ## Presigned URLs
 
-A presigned URL is a time-limited, bearer-token URL that authorizes a single
-operation. Generate one with the AWS CLI:
+A presigned URL authorizes one operation for a fixed window, with no credentials
+on the far end. Generate a download link good for an hour:
 
 ```bash
-# Presigned GET (valid 1 hour).
-aws s3 presign s3://my-bucket/file.txt \
-  --expires-in 3600 \
-  --profile liteio
+aws s3 presign s3://my-bucket/file.txt --expires-in 3600 --profile liteio
 ```
 
+Anyone with the URL can fetch it:
+
 ```bash
-# Download with curl — no AWS credentials needed.
 curl "https://liteio.example.com/my-bucket/file.txt?X-Amz-..."
 ```
 
-Presigned PUT URLs:
+Presigned PUT works the same way, which is the usual pattern for browser
+uploads that never see your secret key:
 
 ```bash
-aws s3 presign s3://my-bucket/upload.bin \
-  --expires-in 3600 \
-  --profile liteio
-# Returns a presigned URL. Upload with:
+aws s3 presign s3://my-bucket/upload.bin --expires-in 3600 --profile liteio
 curl -X PUT --upload-file upload.bin "$PRESIGNED_URL"
 ```
 
-## STS temporary credentials
+## Temporary credentials
 
-The STS endpoint issues short-lived access keys bound to an IAM role. The
-caller assumes a role (presenting a JWT, LDAP credential, or X.509
-certificate), receives a temporary key pair plus a session token, and uses them
-to sign requests. The session token is passed as the
-`X-Amz-Security-Token` header.
+STS hands out short-lived keys tied to a role. A caller proves who they are with
+a JWT, an LDAP login, or a client certificate, and gets back a temporary access
+key, secret key, and session token. The session token travels in the
+`X-Amz-Security-Token` header and expires on its own, so a leak is bounded in
+time.
 
-See the [federation page](/security/federation/) for OIDC, LDAP, and
-certificate-based STS flows.
+The full OIDC, LDAP, and certificate flows are on the
+[federation page](/security/federation/).
 
-## Anonymous access
+## Anonymous requests
 
-If no credentials are present on a request, liteio evaluates the request as the
-anonymous principal. Bucket policies can grant anonymous read:
+A request with no credentials is evaluated as the anonymous principal. It is
+denied unless a bucket policy opens the door. This grants public read on one
+bucket:
 
 ```json
 {
@@ -84,4 +78,5 @@ anonymous principal. Bucket policies can grant anonymous read:
 }
 ```
 
-Without a permissive bucket policy, anonymous requests are denied.
+Without a policy like this, anonymous access gets `403 AccessDenied`. Nothing is
+public by default.
