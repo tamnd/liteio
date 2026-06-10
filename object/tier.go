@@ -284,6 +284,7 @@ func (s *erasureSet) applyTierStub(ctx context.Context, bucket, object, versionI
 	if countOK(writes) < s.writeQuorum() {
 		return ErrWriteQuorum
 	}
+	s.invalidateObj(bucket, object)
 	return nil
 }
 
@@ -402,6 +403,7 @@ func (s *erasureSet) setRestoreStatus(ctx context.Context, bucket, object, versi
 	if countOK(writes) < s.writeQuorum() {
 		return ErrWriteQuorum
 	}
+	s.invalidateObj(bucket, object)
 	return nil
 }
 

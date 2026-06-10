@@ -8,6 +8,77 @@ import (
 	"time"
 )
 
+// --- per-object ObjectInfo cache -------------------------------------------
+
+const (
+	objCacheTTL = 5 * time.Second
+	objCacheMax = 8192 // max entries; simple map, lazy eviction via TTL
+)
+
+// objectCache caches ObjectInfo results keyed by "bucket\x00key".  It is
+// a write-through cache: putObject populates it, deleteObject removes it.
+// On a STAT/HEAD cache miss the caller reads from drives and populates the
+// cache; subsequent calls for the same hot object skip the 4-drive read.
+// Eviction is lazy (checked on read) and the map is unbounded up to objCacheMax;
+// beyond that we simply stop caching new entries until the next GC sweep clears
+// enough TTL-expired entries.
+type objectCache struct {
+	mu  sync.Mutex
+	now func() time.Time
+	m   map[string]objCacheEntry
+}
+
+type objCacheEntry struct {
+	oi ObjectInfo
+	at time.Time
+}
+
+func newObjectCache() *objectCache {
+	return &objectCache{now: time.Now, m: make(map[string]objCacheEntry, 256)}
+}
+
+func (c *objectCache) key(bucket, object string) string { return bucket + "\x00" + object }
+
+func (c *objectCache) get(bucket, object string) (ObjectInfo, bool) {
+	c.mu.Lock()
+	e, ok := c.m[c.key(bucket, object)]
+	c.mu.Unlock()
+	if !ok {
+		return ObjectInfo{}, false
+	}
+	if c.now().Sub(e.at) > objCacheTTL {
+		c.del(bucket, object)
+		return ObjectInfo{}, false
+	}
+	return e.oi, true
+}
+
+func (c *objectCache) set(bucket, object string, oi ObjectInfo) {
+	c.mu.Lock()
+	if len(c.m) < objCacheMax {
+		c.m[c.key(bucket, object)] = objCacheEntry{oi: oi, at: c.now()}
+	}
+	c.mu.Unlock()
+}
+
+func (c *objectCache) del(bucket, object string) {
+	c.mu.Lock()
+	delete(c.m, c.key(bucket, object))
+	c.mu.Unlock()
+}
+
+// invalidateBucket removes all entries for a bucket. Called on bucket delete.
+func (c *objectCache) invalidateBucket(bucket string) {
+	prefix := bucket + "\x00"
+	c.mu.Lock()
+	for k := range c.m {
+		if len(k) > len(prefix) && k[:len(prefix)] == prefix {
+			delete(c.m, k)
+		}
+	}
+	c.mu.Unlock()
+}
+
 // Metacache bounds (spec doc 07.5). The TTL caps how long a cached namespace walk
 // is served before it is re-walked; the bucket cap bounds memory by evicting the
 // oldest walk when the cache is full.

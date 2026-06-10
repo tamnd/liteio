@@ -192,6 +192,8 @@ func (s *erasureSet) healObject(ctx context.Context, bucket, object, versionID s
 			return err
 		}
 	}
+	// Invalidate any cached ObjectInfo so the healed metadata is served fresh.
+	s.invalidateObj(bucket, object)
 	return nil
 }
 

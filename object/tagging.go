@@ -160,6 +160,7 @@ func (s *erasureSet) setObjectTags(ctx context.Context, bucket, object, versionI
 	if countOK(writes) < s.writeQuorum() {
 		return ErrWriteQuorum
 	}
+	s.invalidateObj(bucket, object)
 	return nil
 }
 
