@@ -226,6 +226,10 @@ func (l *Local) CreateFile(ctx context.Context, volume, path string, size int64,
 	if copyErr == nil && size >= 0 && written != size {
 		copyErr = fmt.Errorf("%w: wrote %d of %d", storage.ErrShortWrite, written, size)
 	}
+	// fsync the file itself so data is durable on the drive.  We intentionally
+	// skip the parent-directory fsync here: obj.meta (written later by WriteMeta)
+	// is the commit point.  Losing the directory entry for a part file before
+	// obj.meta is written leaves the object invisible, which is safe and correct.
 	syncErr := f.Sync()
 	closeErr := f.Close()
 	if copyErr != nil {
@@ -239,7 +243,7 @@ func (l *Local) CreateFile(ctx context.Context, volume, path string, size int64,
 	if closeErr != nil {
 		return fmt.Errorf("local: close data: %w", closeErr)
 	}
-	return syncDir(filepath.Dir(full))
+	return nil
 }
 
 // ReadFile implements storage.StorageAPI: it reads into buf at an offset.
@@ -319,7 +323,10 @@ func (l *Local) RenameData(_ context.Context, volume, srcPath, dstPath string) e
 		}
 		return fmt.Errorf("local: rename data: %w", err)
 	}
-	return syncDir(filepath.Dir(dst))
+	// Skip parent-dir fsync: obj.meta (committed by WriteMeta after this call)
+	// is the true commit point.  Losing this rename before obj.meta is written
+	// leaves the object absent, which is safe.
+	return nil
 }
 
 // RenameFile implements storage.StorageAPI: it atomically renames a single file.
@@ -354,7 +361,9 @@ func (l *Local) Delete(_ context.Context, volume, path string, recursive bool) e
 		if err := os.RemoveAll(full); err != nil {
 			return fmt.Errorf("local: recursive delete: %w", err)
 		}
-		return syncDir(filepath.Dir(full))
+		// Data removal: skip parent-dir fsync.  If the removal is lost on crash
+		// and data reappears, the subsequent heal/quorum read still works.
+		return nil
 	}
 	err = os.Remove(full)
 	switch {
@@ -365,7 +374,7 @@ func (l *Local) Delete(_ context.Context, volume, path string, recursive bool) e
 	case err != nil:
 		return fmt.Errorf("local: delete: %w", err)
 	}
-	return syncDir(filepath.Dir(full))
+	return nil
 }
 
 // StatFile implements storage.StorageAPI: it returns a single file's metadata.

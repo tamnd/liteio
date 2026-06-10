@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/tamnd/liteio/object/erasure"
+	"github.com/tamnd/liteio/object/index"
 	"github.com/tamnd/liteio/object/meta"
 	"github.com/tamnd/liteio/object/placement"
 	"github.com/tamnd/liteio/storage"
@@ -322,7 +323,7 @@ func (s *erasureSet) completeMultipartUpload(ctx context.Context, bucket, object
 		return struct{}{}, s.drives[i].Delete(ctx, bucket, dir, true)
 	})
 
-	return ObjectInfo{
+	oi := ObjectInfo{
 		Bucket:      bucket,
 		Name:        object,
 		VersionID:   versionID,
@@ -332,7 +333,21 @@ func (s *erasureSet) completeMultipartUpload(ctx context.Context, bucket, object
 		ETag:        etag,
 		ContentType: info.Metadata["content-type"],
 		UserDefined: info.Metadata,
-	}, nil
+	}
+	if s.idx != nil {
+		_ = s.idx.Put(bucket, object, index.Entry{
+			ETag:        etag,
+			Size:        totalSize,
+			ModTime:     modTime,
+			ContentType: info.Metadata["content-type"],
+			VersionID:   versionID,
+			UserDefined: info.Metadata,
+		})
+	}
+	if s.objCache != nil {
+		s.objCache.set(bucket, object, oi)
+	}
+	return oi, nil
 }
 
 // --- abort & list --------------------------------------------------------

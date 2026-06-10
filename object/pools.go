@@ -5,12 +5,14 @@ package object
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/tamnd/liteio/cluster/lock"
 	"github.com/tamnd/liteio/event"
+	"github.com/tamnd/liteio/object/index"
 	"github.com/tamnd/liteio/replication"
 	"github.com/tamnd/liteio/storage"
 	"github.com/tamnd/liteio/tier"
@@ -185,13 +187,40 @@ func NewServerPools(deploymentID [16]byte, pools []PoolConfig, opts ...Option) (
 	// Wire reactive heal: each set reports a partial write to the queue, which
 	// routes the heal back through the layer so it lands on the right set.
 	sp.mrf = newMRF(sp.healTask, DefaultMRFDepth)
-	for _, set := range sp.allSets() {
-		set.notifyPartial = func(bucket, object, versionID string) {
+	for i, set := range sp.allSets() {
+		capturedSet := set
+		capturedSet.notifyPartial = func(bucket, object, versionID string) {
 			sp.mrf.enqueue(healTask{bucket: bucket, object: object, versionID: versionID})
 		}
-		set.kms = sp.kms
+		capturedSet.kms = sp.kms
+		// Open the persistent namespace index for this set.  The index DB lives
+		// alongside the first drive's root so it survives server restarts.  On
+		// failure we log and proceed without the index; walkObjects falls back to
+		// the filesystem scan.
+		if len(capturedSet.drives) > 0 {
+			idxDir := capturedSet.drives[0].String() + "/.meta/" + "idx" + formatSetIdx(i)
+			if idx, err := openSetIndex(idxDir); err == nil {
+				capturedSet.idx = idx
+			}
+		}
+		capturedSet.objCache = newObjectCache()
 	}
 	return sp, nil
+}
+
+// formatSetIdx returns a stable suffix used to distinguish per-set index
+// directories when multiple sets share the same first drive root.
+func formatSetIdx(i int) string {
+	if i == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d", i)
+}
+
+// openSetIndex opens (or creates) a bbolt namespace index at dir.
+// Extracted so it can be replaced in tests without a real filesystem.
+func openSetIndex(dir string) (*index.Index, error) {
+	return index.Open(dir)
 }
 
 // StartHealing launches the reactive-heal worker, which drains the
@@ -201,6 +230,17 @@ func NewServerPools(deploymentID [16]byte, pools []PoolConfig, opts ...Option) (
 // backstop).
 func (sp *ServerPools) StartHealing(ctx context.Context) {
 	go sp.mrf.run(ctx)
+}
+
+// Shutdown closes all persistent resources owned by the layer (index databases,
+// etc.). It is safe to call multiple times.
+func (sp *ServerPools) Shutdown() {
+	for _, set := range sp.allSets() {
+		if set.idx != nil {
+			_ = set.idx.Close()
+			set.idx = nil
+		}
+	}
 }
 
 // MRFStats returns the reactive-heal queue's running counters.

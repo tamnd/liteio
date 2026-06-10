@@ -183,6 +183,7 @@ func (s *erasureSet) setReplicationStatus(ctx context.Context, bucket, object, v
 	if countOK(writes) < s.writeQuorum() {
 		return ErrWriteQuorum
 	}
+	s.invalidateObj(bucket, object)
 	return nil
 }
 

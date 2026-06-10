@@ -245,6 +245,7 @@ func (s *erasureSet) setObjectRetention(ctx context.Context, bucket, object, ver
 	if countOK(res) < s.writeQuorum() {
 		return ErrWriteQuorum
 	}
+	s.invalidateObj(bucket, object)
 	return nil
 }
 
@@ -315,6 +316,7 @@ func (s *erasureSet) setObjectLegalHold(ctx context.Context, bucket, object, ver
 	if countOK(res) < s.writeQuorum() {
 		return ErrWriteQuorum
 	}
+	s.invalidateObj(bucket, object)
 	return nil
 }
 

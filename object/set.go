@@ -14,11 +14,13 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"encoding/json"
 
 	"github.com/tamnd/liteio/object/erasure"
+	"github.com/tamnd/liteio/object/index"
 	"github.com/tamnd/liteio/object/meta"
 	"github.com/tamnd/liteio/object/placement"
 	"github.com/tamnd/liteio/replication"
@@ -56,6 +58,20 @@ type erasureSet struct {
 
 	// kms, when non-nil, enables SSE-S3 envelope encryption for this set.
 	kms KMSBackend
+
+	// idx is the persistent namespace index (bbolt).  Nil when not configured.
+	// It is opened by NewServerPools after newSet and closed at Shutdown.
+	idx *index.Index
+
+	// knownBuckets caches bucket names that exist (sync.Map: string → struct{}).
+	// getBucketInfo checks here first so a PUT avoids 4 StatVol calls per bucket.
+	// Populated on makeBucket and the first successful getBucketInfo; cleared on
+	// deleteBucket.
+	knownBuckets sync.Map
+
+	// objCache caches ObjectInfo results for hot-path getObjectInfo calls.
+	// Populated on putObject and cache-miss getObjectInfo; cleared on deleteObject.
+	objCache *objectCache
 }
 
 // newSet builds an erasure set over drives with M parity shards. K = N - M.
@@ -92,6 +108,15 @@ func (s *erasureSet) writeQuorum() int {
 
 func (s *erasureSet) now() time.Time { return s.clock().UTC() }
 
+// invalidateObj drops the cached ObjectInfo for bucket/object so the next
+// STAT/HEAD reads fresh metadata from disk.  Call this after any in-place
+// metadata update (replication status, tagging, object lock, heal, etc.).
+func (s *erasureSet) invalidateObj(bucket, object string) {
+	if s.objCache != nil {
+		s.objCache.del(bucket, object)
+	}
+}
+
 // --- buckets -------------------------------------------------------------
 
 func (s *erasureSet) makeBucket(ctx context.Context, bucket string, versioned bool) error {
@@ -123,10 +148,19 @@ func (s *erasureSet) makeBucket(ctx context.Context, bucket string, versioned bo
 			return err
 		}
 	}
+	s.knownBuckets.Store(bucket, struct{}{})
+	if s.idx != nil {
+		_ = s.idx.CreateBucket(bucket)
+	}
 	return nil
 }
 
 func (s *erasureSet) getBucketInfo(ctx context.Context, bucket string) (BucketInfo, error) {
+	// Fast path: bucket is known to exist (set on first successful check or on
+	// makeBucket).  Avoid 4 StatVol fan-outs on every PUT hot path.
+	if _, known := s.knownBuckets.Load(bucket); known {
+		return BucketInfo{Name: bucket}, nil
+	}
 	res := fanOut(ctx, len(s.drives), func(ctx context.Context, i int) (storage.VolInfo, error) {
 		return s.drives[i].StatVol(ctx, bucket)
 	})
@@ -135,6 +169,7 @@ func (s *erasureSet) getBucketInfo(ctx context.Context, bucket string) (BucketIn
 	}
 	for _, r := range res {
 		if r.err == nil {
+			s.knownBuckets.Store(bucket, struct{}{})
 			return BucketInfo{Name: bucket, Created: r.val.Created}, nil
 		}
 	}
@@ -184,6 +219,13 @@ func (s *erasureSet) deleteBucket(ctx context.Context, bucket string, force bool
 	}
 	if ok < s.writeQuorum() {
 		return ErrBucketNotFound
+	}
+	s.knownBuckets.Delete(bucket)
+	if s.objCache != nil {
+		s.objCache.invalidateBucket(bucket)
+	}
+	if s.idx != nil {
+		_ = s.idx.DeleteBucket(bucket)
 	}
 	return nil
 }
@@ -488,7 +530,7 @@ func (s *erasureSet) putObject(ctx context.Context, bucket, object string, r *Pu
 	}
 	s.maybeHeal(countOK(writes), bucket, object, versionID)
 
-	return ObjectInfo{
+	oi := ObjectInfo{
 		Bucket:      bucket,
 		Name:        object,
 		VersionID:   versionID,
@@ -498,7 +540,23 @@ func (s *erasureSet) putObject(ctx context.Context, bucket, object string, r *Pu
 		ETag:        etag,
 		ContentType: userMeta["content-type"],
 		UserDefined: userMeta,
-	}, nil
+	}
+	// Update the persistent index and in-memory caches.  Both are best-effort:
+	// a miss or stale entry falls back to the filesystem, so errors are not fatal.
+	if s.idx != nil {
+		_ = s.idx.Put(bucket, object, index.Entry{
+			ETag:        etag,
+			Size:        int64(len(data)),
+			ModTime:     modTime,
+			ContentType: userMeta["content-type"],
+			VersionID:   versionID,
+			UserDefined: userMeta,
+		})
+	}
+	if s.objCache != nil {
+		s.objCache.set(bucket, object, oi)
+	}
+	return oi, nil
 }
 
 // readAllMeta reads and decodes obj.meta from every drive, returning a per-drive
@@ -526,6 +584,24 @@ func (s *erasureSet) getObjectInfo(ctx context.Context, bucket, object string, o
 	if err := validObject(object); err != nil {
 		return ObjectInfo{}, err
 	}
+	// Fast path: in-memory cache for non-version-specific lookups.
+	// SSE-C key checks are enforced even on cache hits so a caller without
+	// the correct key still gets the appropriate error.
+	if s.objCache != nil && opts.VersionID == "" {
+		if oi, ok := s.objCache.get(bucket, object); ok {
+			if _, isSSEC := oi.UserDefined[ssec.MetaKeyMD5]; isSSEC {
+				if opts.SSECKey == nil {
+					return ObjectInfo{}, ErrSSECKeyRequired
+				}
+				if !ssec.ValidateMD5(*opts.SSECKey, oi.UserDefined[ssec.MetaKeyMD5]) {
+					return ObjectInfo{}, ErrSSECKeyMismatch
+				}
+			} else if opts.SSECKey != nil {
+				return ObjectInfo{}, ErrSSECOnUnencrypted
+			}
+			return oi, nil
+		}
+	}
 	metas := s.readAllMeta(ctx, bucket, object)
 	selected, _, ok := meta.QuorumVersion(metas, opts.VersionID, s.readQuorum())
 	if !ok {
@@ -551,7 +627,14 @@ func (s *erasureSet) getObjectInfo(ctx context.Context, bucket, object string, o
 	} else if opts.SSECKey != nil {
 		return ObjectInfo{}, ErrSSECOnUnencrypted
 	}
-	return toObjectInfo(bucket, object, fi), nil
+	oi := toObjectInfo(bucket, object, fi)
+	// Populate the cache for unversioned, non-SSE-C objects so the next
+	// STAT/HEAD is a fast hit.  SSE-C objects are cached too (key validation
+	// still runs on every cache hit in the fast path above).
+	if s.objCache != nil && opts.VersionID == "" {
+		s.objCache.set(bucket, object, oi)
+	}
+	return oi, nil
 }
 
 func (s *erasureSet) getObject(ctx context.Context, bucket, object string, opts ObjectOptions) (*GetObjectReader, error) {
@@ -758,6 +841,13 @@ func (s *erasureSet) deleteObject(ctx context.Context, bucket, object string, op
 	if countOK(writes) < s.writeQuorum() {
 		return ObjectInfo{}, ErrWriteQuorum
 	}
+	// Remove from caches so subsequent STAT/LIST reflects the deletion.
+	if s.objCache != nil {
+		s.objCache.del(bucket, object)
+	}
+	if s.idx != nil {
+		_ = s.idx.Delete(bucket, object)
+	}
 	return ObjectInfo{Bucket: bucket, Name: object, VersionID: targetID}, nil
 }
 
@@ -812,11 +902,32 @@ func applyListing(keys []string, prefix, token, startAfter, delim string, maxKey
 	return res
 }
 
-// walkObjects returns every object key in a bucket by descending the directory
-// tree of the first online drive; a directory that directly contains obj.meta is
-// an object. A union across drives and pagination at the storage layer are later
-// optimizations.
+// walkObjects returns every object key in a bucket.
+//
+// Fast path: when the persistent index is available, return its sorted key list
+// directly — one B-tree cursor sweep instead of recursive filesystem readdir.
+// The index is populated by every putObject/deleteObject, so it is an exact
+// mirror of what is on disk for non-versioned buckets.
+//
+// Fallback: when no index is configured (or the index bucket is empty, which
+// happens before the first PUT after a fresh start), descend the directory tree
+// of the first online drive.
 func (s *erasureSet) walkObjects(ctx context.Context, bucket string) ([]string, error) {
+	if s.idx != nil {
+		keys, err := s.idx.AllKeys(bucket)
+		if err == nil && len(keys) > 0 {
+			return keys, nil
+		}
+		// On error or empty index fall through to the filesystem walk so that a
+		// freshly-started node without a pre-built index still works correctly.
+	}
+	return s.walkObjectsFS(ctx, bucket)
+}
+
+// walkObjectsFS descends the directory tree on the first online drive, returning
+// all object keys. This is the legacy O(N-readdir) path used when no index is
+// available.
+func (s *erasureSet) walkObjectsFS(ctx context.Context, bucket string) ([]string, error) {
 	var drive storage.StorageAPI
 	for _, d := range s.drives {
 		if d.IsOnline() {
