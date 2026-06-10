@@ -15,6 +15,7 @@ import (
 	"flag"
 	"log/slog"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"strings"
@@ -78,6 +79,10 @@ type config struct {
 	// bearer credential. Empty disables the endpoint, so metrics are never exposed
 	// without an explicit token.
 	metricsToken string
+
+	// debugAddress, when set, starts a net/http/pprof listener for CPU and heap
+	// profiling. Never set in production; for benchmark diagnosis only.
+	debugAddress string
 }
 
 func run(argv []string) error {
@@ -89,6 +94,14 @@ func run(argv []string) error {
 	layer, clusterSrv, err := buildLayer(cfg)
 	if err != nil {
 		return err
+	}
+
+	if cfg.debugAddress != "" {
+		go func() {
+			slog.Info("pprof listening", "address", cfg.debugAddress)
+			//nolint:gosec
+			_ = http.ListenAndServe(cfg.debugAddress, nil)
+		}()
 	}
 
 	// One identity store backs every authenticated surface: it verifies SigV4
@@ -242,6 +255,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.consoleRegion, "console-region", os.Getenv("LITEIO_CONSOLE_REGION"), "region the console signs admin calls under (default: us-east-1)")
 	fs.BoolVar(&cfg.consoleInsecureCookie, "console-insecure-cookie", os.Getenv("LITEIO_CONSOLE_INSECURE_COOKIE") == "1", "drop the Secure attribute on the console cookie for plain-HTTP local testing")
 	fs.StringVar(&cfg.metricsToken, "metrics-token", os.Getenv("LITEIO_METRICS_TOKEN"), "bearer token gating the Prometheus /metrics endpoint on the console listener; empty disables it")
+	fs.StringVar(&cfg.debugAddress, "debug-address", os.Getenv("LITEIO_DEBUG_ADDRESS"), "pprof debug listener address (e.g. :6060); empty disables it")
 	if err := fs.Parse(argv); err != nil {
 		return config{}, err
 	}

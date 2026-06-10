@@ -213,6 +213,7 @@ func (s *Server) listObjectsV2(w http.ResponseWriter, r *http.Request, requestID
 		Delimiter:             delim,
 		IsTruncated:           res.IsTruncated,
 	}
+	out.Contents = make([]objectEntry, 0, len(res.Objects))
 	for _, o := range res.Objects {
 		out.Contents = append(out.Contents, objectEntry{
 			Key:          o.Name,
@@ -222,11 +223,14 @@ func (s *Server) listObjectsV2(w http.ResponseWriter, r *http.Request, requestID
 			StorageClass: "STANDARD",
 		})
 	}
-	for _, p := range res.Prefixes {
-		out.CommonPrefixes = append(out.CommonPrefixes, commonPrefix{Prefix: p})
+	if len(res.Prefixes) > 0 {
+		out.CommonPrefixes = make([]commonPrefix, 0, len(res.Prefixes))
+		for _, p := range res.Prefixes {
+			out.CommonPrefixes = append(out.CommonPrefixes, commonPrefix{Prefix: p})
+		}
 	}
 	out.KeyCount = len(out.Contents) + len(out.CommonPrefixes)
-	writeXML(w, requestID, http.StatusOK, out)
+	writeListBucketV2(w, requestID, out)
 }
 
 // listObjectVersions handles GET /bucket?versions: it lists every version and
@@ -342,7 +346,7 @@ func (s *Server) listObjectsV1(w http.ResponseWriter, r *http.Request, requestID
 	if res.IsTruncated && len(out.Contents) > 0 {
 		out.NextMarker = out.Contents[len(out.Contents)-1].Key
 	}
-	writeXML(w, requestID, http.StatusOK, out)
+	writeListBucketV1(w, requestID, out)
 }
 
 // getObjectAttributes handles GET /bucket/key?attributes. The

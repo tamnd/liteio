@@ -344,6 +344,9 @@ func (s *erasureSet) completeMultipartUpload(ctx context.Context, bucket, object
 			UserDefined: info.Metadata,
 		})
 	}
+	if s.mem != nil {
+		s.mem.Put(bucket, object, oi)
+	}
 	if s.objCache != nil {
 		s.objCache.set(bucket, object, oi)
 	}

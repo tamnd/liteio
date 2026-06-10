@@ -63,6 +63,12 @@ type erasureSet struct {
 	// It is opened by NewServerPools after newSet and closed at Shutdown.
 	idx *index.Index
 
+	// mem is the in-memory listing index: a sorted per-bucket key+ObjectInfo
+	// store updated on every PUT/DELETE. ListObjectsV2 reads from this with no
+	// disk access. It is loaded from bbolt on startup so warm listings survive
+	// server restarts. Nil when not wired (legacy path).
+	mem *inmemIndex
+
 	// knownBuckets caches bucket names that exist (sync.Map: string → struct{}).
 	// getBucketInfo checks here first so a PUT avoids 4 StatVol calls per bucket.
 	// Populated on makeBucket and the first successful getBucketInfo; cleared on
@@ -152,6 +158,11 @@ func (s *erasureSet) makeBucket(ctx context.Context, bucket string, versioned bo
 	if s.idx != nil {
 		_ = s.idx.CreateBucket(bucket)
 	}
+	// Ensure the in-memory index has a bucket entry so Populated() is ready
+	// even before the first PUT.
+	if s.mem != nil {
+		_ = s.mem.bucket(bucket)
+	}
 	return nil
 }
 
@@ -226,6 +237,9 @@ func (s *erasureSet) deleteBucket(ctx context.Context, bucket string, force bool
 	}
 	if s.idx != nil {
 		_ = s.idx.DeleteBucket(bucket)
+	}
+	if s.mem != nil {
+		s.mem.DeleteBucket(bucket)
 	}
 	return nil
 }
@@ -553,6 +567,9 @@ func (s *erasureSet) putObject(ctx context.Context, bucket, object string, r *Pu
 			UserDefined: userMeta,
 		})
 	}
+	if s.mem != nil {
+		s.mem.Put(bucket, object, oi)
+	}
 	if s.objCache != nil {
 		s.objCache.set(bucket, object, oi)
 	}
@@ -848,10 +865,60 @@ func (s *erasureSet) deleteObject(ctx context.Context, bucket, object string, op
 	if s.idx != nil {
 		_ = s.idx.Delete(bucket, object)
 	}
+	if s.mem != nil {
+		s.mem.Delete(bucket, object)
+	}
 	return ObjectInfo{Bucket: bucket, Name: object, VersionID: targetID}, nil
 }
 
 // --- listing -------------------------------------------------------------
+
+// applyListingFromOIs is identical to applyListing but works directly from a
+// pre-fetched []ObjectInfo slice (sorted by Name) — no per-key disk reads.
+// Used when all metadata is available from the persistent index.
+func applyListingFromOIs(ois []ObjectInfo, prefix, token, startAfter, delim string, maxKeys int) ListObjectsV2Info {
+	sort.Slice(ois, func(i, j int) bool { return ois[i].Name < ois[j].Name })
+	after := startAfter
+	if token != "" {
+		after = token
+	}
+	var res ListObjectsV2Info
+	seenPrefix := map[string]bool{}
+	for _, oi := range ois {
+		key := oi.Name
+		if prefix != "" && !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		if after != "" && key <= after {
+			continue
+		}
+		if delim != "" {
+			rest := key[len(prefix):]
+			if idx := strings.Index(rest, delim); idx >= 0 {
+				cp := prefix + rest[:idx+len(delim)]
+				if !seenPrefix[cp] {
+					if res.count() >= maxKeys {
+						res.IsTruncated = true
+						res.NextContinuationToken = lastKey(res)
+						return res
+					}
+					seenPrefix[cp] = true
+					res.Prefixes = append(res.Prefixes, cp)
+				}
+				continue
+			}
+		}
+		if res.count() >= maxKeys {
+			res.IsTruncated = true
+			res.NextContinuationToken = lastKey(res)
+			return res
+		}
+		if !oi.DeleteMarker {
+			res.Objects = append(res.Objects, oi)
+		}
+	}
+	return res
+}
 
 // applyListing turns a flat key list into an S3 ListObjectsV2 result: prefix
 // filtering, delimiter rollup into common prefixes, start-after/continuation
@@ -902,6 +969,20 @@ func applyListing(keys []string, prefix, token, startAfter, delim string, maxKey
 	return res
 }
 
+// listFromIndex returns all ObjectInfo for a bucket served entirely from the
+// in-memory index with no per-object disk reads. Returns (nil, false) when
+// the in-memory index is unavailable or the bucket has no indexed entries.
+func (s *erasureSet) listFromIndex(bucket string) ([]ObjectInfo, bool) {
+	if s.mem == nil {
+		return nil, false
+	}
+	_, ois := s.mem.AllEntries(bucket)
+	if len(ois) == 0 {
+		return nil, false
+	}
+	return ois, true
+}
+
 // walkObjects returns every object key in a bucket.
 //
 // Fast path: when the persistent index is available, return its sorted key list
@@ -913,6 +994,14 @@ func applyListing(keys []string, prefix, token, startAfter, delim string, maxKey
 // happens before the first PUT after a fresh start), descend the directory tree
 // of the first online drive.
 func (s *erasureSet) walkObjects(ctx context.Context, bucket string) ([]string, error) {
+	// Fast path: in-memory index (zero disk I/O).
+	if s.mem != nil && s.mem.Populated(bucket) {
+		keys, _ := s.mem.AllEntries(bucket)
+		if len(keys) > 0 {
+			return keys, nil
+		}
+	}
+	// Second fast path: bbolt persistent index (mmap'd B-tree scan).
 	if s.idx != nil {
 		keys, err := s.idx.AllKeys(bucket)
 		if err == nil && len(keys) > 0 {
