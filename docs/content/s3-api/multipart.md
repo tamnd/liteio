@@ -1,33 +1,32 @@
 ---
 title: "Multipart upload"
-description: "Upload large objects in parallel parts."
+description: "Upload large objects as parallel parts."
 weight: 40
 ---
 
-Multipart upload lets you split a large object into independently uploaded
-parts, then assemble them server-side. The AWS CLI uses multipart automatically
-for files over 8 MB with `aws s3 cp`; `aws s3api` lets you control each step.
+Multipart upload splits a large object into parts you upload independently, then
+liteio stitches them together server-side. The AWS CLI switches to multipart on
+its own for files over 8 MB; `aws s3api` gives you each step when you need
+control.
 
-## When to use multipart
+Reach for it when:
 
-- Objects over 100 MB benefit from parallel part uploads.
-- Objects over 5 GB require multipart (the single-part PUT limit is 5 GB).
-- Resumable uploads: store the `UploadId` and resume from the last successful
-  part after a network failure.
+- An object is over 100 MB and you want parallel part uploads.
+- An object is over 5 GB, the single-part PUT ceiling, so multipart is required.
+- You need resumable uploads. Keep the `UploadId` and re-send only the parts
+  that failed.
 
-## High-level (AWS CLI)
+## The easy way
 
-For most cases, `aws s3 cp` handles multipart transparently:
+For most uploads, `aws s3 cp` handles multipart transparently:
 
 ```bash
-aws s3 cp large-file.bin s3://my-bucket/large-file.bin \
-  --expected-size 1073741824 \
-  --profile liteio
+aws s3 cp large-file.bin s3://my-bucket/large-file.bin --profile liteio
 ```
 
-## Low-level (step by step)
+## Step by step
 
-### 1. Start the upload
+### 1. Start
 
 ```bash
 aws s3api create-multipart-upload \
@@ -37,21 +36,17 @@ aws s3api create-multipart-upload \
 ```
 
 ```json
-{
-    "Bucket": "my-bucket",
-    "Key": "large-file.bin",
-    "UploadId": "2~abc123..."
-}
+{ "Bucket": "my-bucket", "Key": "large-file.bin", "UploadId": "2~abc123..." }
 ```
 
-Save the `UploadId` for subsequent calls.
+Hold onto the `UploadId`. Every later call needs it.
 
-### 2. Upload each part
+### 2. Upload the parts
 
-Parts must be at least 5 MB (except the last part). Upload them in any order:
+Each part is at least 5 MB, except the last. Upload them in any order, in
+parallel if you like, and record the `PartNumber` and `ETag` from each reply:
 
 ```bash
-# Part 1 (first 100 MB)
 aws s3api upload-part \
   --bucket my-bucket \
   --key large-file.bin \
@@ -62,14 +57,12 @@ aws s3api upload-part \
 ```
 
 ```json
-{
-    "ETag": "\"abc001\""
-}
+{ "ETag": "\"abc001\"" }
 ```
 
-Repeat for each part. Record the `PartNumber` and `ETag` from each response.
+### 3. Complete
 
-### 3. Complete the upload
+Hand back the parts in ascending order:
 
 ```bash
 aws s3api complete-multipart-upload \
@@ -87,17 +80,16 @@ aws s3api complete-multipart-upload \
 ```
 
 ```json
-{
-    "Bucket": "my-bucket",
-    "Key": "large-file.bin",
-    "ETag": "\"def456-3\""
-}
+{ "Bucket": "my-bucket", "Key": "large-file.bin", "ETag": "\"def456-3\"" }
 ```
 
-The final ETag is the MD5 of the concatenated part ETags followed by a `-N`
-suffix (where N is the part count), as the S3 spec defines.
+The final ETag is the MD5 of the concatenated part ETags with a `-N` suffix for
+the part count, the same scheme AWS uses. It is not the MD5 of the whole object,
+so do not compare it against a local `md5sum`.
 
-### Abort a failed upload
+### Abort
+
+Give up on an upload and free its parts:
 
 ```bash
 aws s3api abort-multipart-upload \
@@ -107,17 +99,11 @@ aws s3api abort-multipart-upload \
   --profile liteio
 ```
 
-### List in-progress uploads
+## Inspect uploads in flight
 
 ```bash
-aws s3api list-multipart-uploads \
-  --bucket my-bucket \
-  --profile liteio
-```
+aws s3api list-multipart-uploads --bucket my-bucket --profile liteio
 
-### List uploaded parts
-
-```bash
 aws s3api list-parts \
   --bucket my-bucket \
   --key large-file.bin \
@@ -125,10 +111,10 @@ aws s3api list-parts \
   --profile liteio
 ```
 
-## UploadPartCopy
+## Copy a range into a part
 
-Copy part of an existing object as a multipart part without re-uploading the
-data:
+Assemble a new object from a slice of an existing one without pulling the bytes
+through your client:
 
 ```bash
 aws s3api upload-part-copy \

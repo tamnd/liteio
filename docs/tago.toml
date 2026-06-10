@@ -1,6 +1,6 @@
 title       = "liteio"
 baseURL     = "https://liteio.tamnd.com/"
-description = "A high-performance, S3-compatible object store written in Go."
+description = "A fast, fully open, S3-compatible object store written in Go."
 contentDir  = "content"
 outputDir   = "public"
 theme       = "tago-doks"
@@ -8,7 +8,7 @@ syntaxHighlight = "true"
 
 [params]
 github = "https://github.com/tamnd/liteio"
-heroTitle = "S3-compatible object storage that saturates your hardware"
-heroLead = "liteio is a ground-up MinIO alternative: Apache-2.0, every management feature free, deterministic placement with no metadata database, and a hand-tuned data path built to max out NVMe and your NIC."
-heroPrimaryURL = "/getting-started/introduction/"
+heroTitle = "Fast, open, S3-compatible object storage"
+heroLead = "liteio is a single-binary MinIO alternative under Apache-2.0. No open-core, no metadata database, no feature held back behind a paywall. The data path is built to keep your NVMe and your NIC busy."
+heroPrimaryURL = "/getting-started/quick-start/"
 heroPrimaryText = "Get started"

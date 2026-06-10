@@ -1,24 +1,23 @@
 ---
 title: "Listing objects"
-description: "List objects in a bucket with prefix filtering, delimiter grouping, and pagination."
+description: "List with prefix filters, delimiter grouping, and pagination."
 weight: 30
 ---
 
-liteio supports both `ListObjectsV2` (preferred) and the legacy `ListObjects`
-(v1). Both return at most 1,000 objects per page and support prefix filtering
-and delimiter-based grouping (virtual directories).
+liteio serves both `ListObjectsV2` (use this) and the legacy `ListObjects` v1.
+Both page at 1,000 objects, filter by prefix, and group by delimiter into
+virtual directories.
 
-The in-memory namespace index makes list requests fast even on buckets with
-millions of objects: a scan across a 10,000-object bucket completes in under
-1 ms on the server and returns 1,000 results in 32 ms end-to-end on a shared
-VPS.
+Listing is fast even on big buckets. An in-memory namespace index answers the
+query without touching disk, so a scan over 10,000 objects finishes in under a
+millisecond on the server, and a full 1,000-object page comes back in 32 ms over
+the wire on a modest VPS. Most of that 32 ms is network and OS scheduling, not
+liteio.
 
-## List all objects
+## Everything
 
 ```bash
-aws s3api list-objects-v2 \
-  --bucket my-bucket \
-  --profile liteio
+aws s3api list-objects-v2 --bucket my-bucket --profile liteio
 ```
 
 ```json
@@ -38,7 +37,7 @@ aws s3api list-objects-v2 \
 }
 ```
 
-## Filter by prefix
+## By prefix
 
 ```bash
 aws s3api list-objects-v2 \
@@ -47,24 +46,22 @@ aws s3api list-objects-v2 \
   --profile liteio
 ```
 
-Returns only keys that start with `logs/2026/`.
+Returns only keys under `logs/2026/`.
 
-## Virtual directories (delimiter)
+## As directories
 
-Use `/` as a delimiter to list the top-level "directories":
+A `/` delimiter collapses everything below each first slash into a common
+prefix, so you get the top-level folders instead of every key:
 
 ```bash
-aws s3api list-objects-v2 \
-  --bucket my-bucket \
-  --delimiter / \
-  --profile liteio
+aws s3api list-objects-v2 --bucket my-bucket --delimiter / --profile liteio
 ```
 
 ```json
 {
     "CommonPrefixes": [
-        {"Prefix": "docs/"},
-        {"Prefix": "logs/"}
+        { "Prefix": "docs/" },
+        { "Prefix": "logs/" }
     ],
     "KeyCount": 2,
     "MaxKeys": 1000,
@@ -72,7 +69,8 @@ aws s3api list-objects-v2 \
 }
 ```
 
-Combine with `--prefix` to list a subdirectory:
+Add a prefix to descend one level at a time, the way a file browser walks a
+tree:
 
 ```bash
 aws s3api list-objects-v2 \
@@ -82,21 +80,18 @@ aws s3api list-objects-v2 \
   --profile liteio
 ```
 
-## Pagination
+## Paging
 
-When `IsTruncated` is `true`, use `NextContinuationToken` to fetch the next
-page:
+When `IsTruncated` is `true`, the response carries a `NextContinuationToken`.
+Feed it back to get the next page. The AWS CLI does this for you with
+`--max-items` and `--starting-token`:
 
 ```bash
 aws s3api list-objects-v2 \
   --bucket my-bucket \
   --max-items 100 \
   --profile liteio
-```
-
-If the response includes `NextToken`, pass it to the next call:
-
-```bash
+# If the output shows NextToken, pass it back:
 aws s3api list-objects-v2 \
   --bucket my-bucket \
   --max-items 100 \
@@ -104,42 +99,20 @@ aws s3api list-objects-v2 \
   --profile liteio
 ```
 
-The AWS CLI's `--max-items` + `--starting-token` paginates automatically. To
-use the raw API parameters:
-
-```bash
-aws s3api list-objects-v2 \
-  --bucket my-bucket \
-  --max-keys 100 \
-  --continuation-token "$TOKEN" \
-  --profile liteio
-```
-
-## List all objects in a script
-
-```bash
-aws s3api list-objects-v2 \
-  --bucket my-bucket \
-  --query 'Contents[].Key' \
-  --output text \
-  --profile liteio
-```
-
-For large buckets, page automatically:
+To drive the raw API yourself, use `--max-keys` and `--continuation-token`. Or
+just let the high-level command page for you:
 
 ```bash
 aws s3 ls s3://my-bucket --recursive --profile liteio
 ```
 
-## List object versions
+## Versions
 
-With versioning enabled, `list-object-versions` returns every version and
-delete marker:
+With versioning on, `list-object-versions` returns every version and delete
+marker, newest first:
 
 ```bash
-aws s3api list-object-versions \
-  --bucket my-bucket \
-  --profile liteio
+aws s3api list-object-versions --bucket my-bucket --profile liteio
 ```
 
 ```json
@@ -157,11 +130,4 @@ aws s3api list-object-versions \
 }
 ```
 
-Filter by prefix:
-
-```bash
-aws s3api list-object-versions \
-  --bucket my-bucket \
-  --prefix docs/ \
-  --profile liteio
-```
+It takes the same `--prefix` filter as the object listings.

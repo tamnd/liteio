@@ -1,86 +1,77 @@
 ---
 title: "Configuration"
-description: "Every flag and environment variable liteio accepts."
+description: "Every flag and environment variable liteio reads."
 weight: 40
 ---
 
-liteio reads configuration from command-line flags. Every flag has a
-corresponding environment variable in the form `LITEIO_<FLAG_NAME_UPPERCASED>`
-with hyphens replaced by underscores.
+liteio is configured with command-line flags. Every flag has a matching
+environment variable: take the flag name, uppercase it, replace hyphens with
+underscores, and prefix `LITEIO_`. So `--access-key` is `LITEIO_ACCESS_KEY`.
+Flags win over the environment when both are set.
 
-## Core flags
+## Core
 
-| Flag | Env | Default | Description |
+| Flag | Environment | Default | Purpose |
 |---|---|---|---|
 | `--address` | `LITEIO_ADDRESS` | `:9000` | S3 API listen address |
 | `--console-address` | `LITEIO_CONSOLE_ADDRESS` | `:9001` | Web console listen address |
-| `--drives` | `LITEIO_DRIVES` | — | Comma-separated drive paths or endpoint patterns |
-| `--parity` | `LITEIO_PARITY` | drives/2 | Number of parity shards per erasure set |
-| `--access-key` | `LITEIO_ACCESS_KEY` | — | Root credential access key |
-| `--secret-key` | `LITEIO_SECRET_KEY` | — | Root credential secret key |
+| `--drives` | `LITEIO_DRIVES` | required | Comma-separated drive paths or endpoint patterns |
+| `--parity` | `LITEIO_PARITY` | drives / 2 | Parity shards per erasure set |
+| `--access-key` | `LITEIO_ACCESS_KEY` | required | Root credential access key |
+| `--secret-key` | `LITEIO_SECRET_KEY` | required | Root credential secret key |
 
-## Cluster flags
+`--parity` is the durability knob. The default, half the drives in a set, is the
+most durable split and lets you lose half the set without data loss. Lower it to
+trade redundancy for usable capacity.
 
-These flags are only needed in distributed mode. A single-node deployment
-omits them entirely.
+## Cluster
 
-| Flag | Env | Default | Description |
-|---|---|---|---|
-| `--cluster-address` | `LITEIO_CLUSTER_ADDRESS` | — | Inter-node RPC listen address. Setting this enables distributed mode. |
-| `--node-host` | `LITEIO_NODE_HOST` | — | Hostname of this node (used to detect local vs remote drives) |
-| `--peers` | `LITEIO_PEERS` | — | Comma-separated cluster addresses of peer nodes |
-| `--cluster-cert` | `LITEIO_CLUSTER_CERT` | — | Path to TLS certificate for inter-node mTLS |
-| `--cluster-key` | `LITEIO_CLUSTER_KEY` | — | Path to TLS private key for inter-node mTLS |
-| `--cluster-ca` | `LITEIO_CLUSTER_CA` | — | Path to CA certificate bundle for inter-node mTLS |
-| `--cluster-server-name` | `LITEIO_CLUSTER_SERVER_NAME` | — | TLS server name used when dialing peers |
+These only apply in distributed mode. A single node ignores them. Setting
+`--cluster-address` is what turns distributed mode on.
 
-## TLS flags
+| Flag | Environment | Purpose |
+|---|---|---|
+| `--cluster-address` | `LITEIO_CLUSTER_ADDRESS` | Inter-node RPC listen address (enables distributed mode) |
+| `--node-host` | `LITEIO_NODE_HOST` | This node's hostname, used to tell local drives from remote |
+| `--peers` | `LITEIO_PEERS` | Comma-separated cluster addresses of the other nodes |
+| `--cluster-cert` | `LITEIO_CLUSTER_CERT` | TLS certificate for inter-node mTLS |
+| `--cluster-key` | `LITEIO_CLUSTER_KEY` | TLS private key for inter-node mTLS |
+| `--cluster-ca` | `LITEIO_CLUSTER_CA` | CA bundle for inter-node mTLS |
+| `--cluster-server-name` | `LITEIO_CLUSTER_SERVER_NAME` | TLS server name used when dialing peers |
 
-| Flag | Env | Default | Description |
-|---|---|---|---|
-| `--tls-cert` | `LITEIO_TLS_CERT` | — | TLS certificate for the S3 API listener |
-| `--tls-key` | `LITEIO_TLS_KEY` | — | TLS private key for the S3 API listener |
-| `--console-tls-cert` | `LITEIO_CONSOLE_TLS_CERT` | — | TLS certificate for the console listener |
-| `--console-tls-key` | `LITEIO_CONSOLE_TLS_KEY` | — | TLS private key for the console listener |
-| `--console-insecure-cookie` | `LITEIO_CONSOLE_INSECURE_COOKIE` | false | Allow the console session cookie over plain HTTP (dev only) |
+## TLS
 
-## Metrics flag
+| Flag | Environment | Purpose |
+|---|---|---|
+| `--tls-cert` | `LITEIO_TLS_CERT` | Certificate for the S3 API listener |
+| `--tls-key` | `LITEIO_TLS_KEY` | Private key for the S3 API listener |
+| `--console-tls-cert` | `LITEIO_CONSOLE_TLS_CERT` | Certificate for the console listener |
+| `--console-tls-key` | `LITEIO_CONSOLE_TLS_KEY` | Private key for the console listener |
+| `--console-insecure-cookie` | `LITEIO_CONSOLE_INSECURE_COOKIE` | Allow the console session cookie over plain HTTP. Local testing only. |
 
-| Flag | Env | Default | Description |
-|---|---|---|---|
-| `--metrics-token` | `LITEIO_METRICS_TOKEN` | — | Bearer token required to scrape `/metrics`. No token = endpoint disabled. |
+## Metrics and debug
 
-## Debug flag
-
-| Flag | Env | Default | Description |
-|---|---|---|---|
-| `--debug-address` | `LITEIO_DEBUG_ADDRESS` | — | Address to serve `net/http/pprof` handlers for CPU and memory profiling |
+| Flag | Environment | Purpose |
+|---|---|---|
+| `--metrics-token` | `LITEIO_METRICS_TOKEN` | Bearer token to scrape `/metrics`. With no token, the endpoint is not served at all. |
+| `--debug-address` | `LITEIO_DEBUG_ADDRESS` | Address for the `net/http/pprof` handlers. Leave unset in production. |
 
 ## Drive patterns
 
-In distributed mode, `--drives` accepts endpoint patterns using brace expansion:
+In distributed mode, `--drives` takes endpoint patterns with brace expansion:
 
 ```
 https://node{1...4}.example.com:9100/mnt/disk{1...8}
 ```
 
-This expands to 32 drive endpoints (4 nodes × 8 disks). liteio distributes them
-across erasure sets automatically based on the total drive count and the
-configured parity level.
+That expands to 32 endpoints, four nodes by eight disks. liteio lays them out
+across erasure sets based on the total count and `--parity`. A drive is local to
+the node whose `--node-host` matches its hostname; everything else is reached
+over the inter-node RPC transport.
 
-A drive endpoint is local to the node when its hostname matches `--node-host`.
-Remote drives are served over the inter-node RPC transport; local drives use
-direct `O_DIRECT` I/O.
+## Two ways to write the same config
 
-## Environment-only settings
-
-A few low-level knobs are only exposed as environment variables.
-
-| Env | Description |
-|---|---|
-| `LITEIO_GO_MAX_PROCS` | Overrides `GOMAXPROCS`. Defaults to the number of available CPUs. |
-
-## Example: single node
+As flags:
 
 ```bash
 liteio \
@@ -89,15 +80,10 @@ liteio \
   --parity 2 \
   --access-key admin \
   --secret-key changeme \
-  --metrics-token secret-scrape-token \
-  --tls-cert /etc/liteio/server.crt \
-  --tls-key /etc/liteio/server.key
+  --metrics-token scrape-token
 ```
 
-## Example: environment-only
-
-All flags can be set from the environment, which is useful in containerized
-deployments where you want to avoid shell quoting:
+As environment, which is friendlier inside containers where shell quoting bites:
 
 ```bash
 export LITEIO_ADDRESS=:9000

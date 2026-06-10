@@ -1,29 +1,31 @@
 ---
 title: "Distributed cluster"
-description: "Run liteio across multiple nodes for fault tolerance and horizontal scale."
+description: "Run liteio across machines for fault tolerance and scale."
 weight: 20
 ---
 
-A distributed liteio cluster spans multiple nodes. Each node runs the same
-binary with the same flags, differing only in `--node-host`. The cluster has no
-primary node; any node can serve any request.
+A distributed cluster spans several nodes. Each runs the same binary with the
+same flags, differing only in `--node-host`. There is no primary and no
+coordinator process; any node serves any request, and the cluster keeps going
+when a node drops.
 
-## Cluster topology
+## Lay out the drives
 
-The `--drives` flag in distributed mode accepts endpoint patterns with brace
-expansion. This example has four nodes, each with eight drives:
+In distributed mode `--drives` takes endpoint patterns with brace expansion.
+This is four nodes with eight drives each:
 
 ```
 https://node{1...4}.example.com:9100/mnt/disk{1...8}
 ```
 
-This expands to 32 drive endpoints. liteio distributes them into erasure sets
-based on the drive count and the parity level. With `--parity 4`, each set
-holds 8 drives (4 data + 4 parity), giving four erasure sets total.
+That is 32 drive endpoints. liteio packs them into erasure sets from the drive
+count and the parity level. With `--parity 4` each set is eight drives, four for
+data and four for parity, giving four sets across the cluster.
 
-## Run each node
+## Start each node
 
-Every node runs the same command with its own `--node-host`:
+Every node runs the same command. Only `--node-host` changes per machine, and a
+node never lists itself in `--peers`.
 
 ```bash
 # On node1:
@@ -42,54 +44,51 @@ liteio \
   --cluster-server-name liteio-cluster
 ```
 
-Replace `node1.example.com` with each node's actual hostname. The `--peers`
-list should include the other three nodes' cluster addresses. The node running
-the command is not listed in `--peers`.
+## Protect inter-node traffic
 
-## mTLS for inter-node traffic
+The cluster address carries object data and namespace locks between nodes. On
+anything but a fully trusted private network, wrap it in mutual TLS:
 
-Inter-node RPC traffic carries object data and namespace locks. Protect it with
-mutual TLS:
+1. Make a cluster CA and a certificate per node, signed by that CA.
+2. Pass `--cluster-cert`, `--cluster-key`, and `--cluster-ca` to every node.
+3. Set `--cluster-server-name` to the name in the certificates' CN or SAN.
 
-1. Generate a cluster CA and per-node certificates signed by it.
-2. Pass `--cluster-cert`, `--cluster-key`, and `--cluster-ca` to each node.
-3. Set `--cluster-server-name` to the value used in the server certificates'
-   CN or SAN fields.
+On a trusted network you can leave all of that off and the cluster listener
+speaks plain HTTP.
 
-On a trusted private network you can omit the TLS flags entirely. The
-cluster-address listener then speaks plain HTTP.
+## Bring-up
 
-## Cluster bring-up
+On a fresh cluster, each node waits for a quorum of peers before it formats
+anything. Once enough nodes are present, they all write their `format.json`
+manifests together and the cluster goes live. Starting the nodes in any order is
+fine; they rendezvous on quorum.
 
-On first run, each node waits for a quorum of peers to come online before
-formatting. Once a quorum is present, every node writes its `format.json`
-manifest and the cluster is live.
+To grow later, add a new pool's drive endpoints to `--drives` and restart the
+nodes. liteio sees the extra pool, formats the new drives, and starts placing
+objects on the new capacity right away. Existing data stays where it is.
 
-To add a new server pool later, expand `--drives` with the new pool's drive
-endpoints and restart all nodes. liteio detects the additional pool, writes a
-new `format.json` to the new drives, and begins placing objects on the new
-capacity immediately.
+## What happens when things break
 
-## Failure modes
-
-| Scenario | Outcome |
+| Situation | What liteio does |
 |---|---|
-| Single drive offline | Reads reconstruct from remaining shards. Reactive healer queues the object for repair when the drive returns. |
-| Single node offline | Reads and writes continue through other nodes serving the affected drives. Namespace locks are quorum-based: a majority of nodes must agree. |
-| Split brain (network partition) | The minority partition refuses writes. Reads from the minority return stale data. The majority partition continues normally. |
-| Below read quorum | Reads return `503 SlowDown`. Writes are rejected. The cluster waits for drives to return. |
+| One drive offline | Reads reconstruct from the surviving shards. The healer queues the object and repairs it when the drive returns. |
+| One node offline | Other nodes keep serving its drives. Namespace locks need a majority of nodes to agree, so a single loss is transparent. |
+| Network partition | The minority side stops accepting writes. The majority side runs normally. Reads from the minority may be stale. |
+| Below read quorum | Reads return `503 SlowDown` and writes are rejected until enough drives come back. liteio refuses to serve data it cannot verify. |
 
 ## Health checks
 
-The admin API on the console port exposes cluster health:
+The console port exposes unauthenticated health endpoints, safe to wire into a
+load balancer:
 
 ```bash
 curl -s http://node1.example.com:9001/minio/health/live
-# 200 OK: node is alive
+# 200: this node is up
+
 curl -s http://node1.example.com:9001/minio/health/cluster
-# 200 OK: cluster has full quorum
+# 200: full quorum
 # 503: degraded or below read quorum
 ```
 
-These endpoints are unauthenticated and safe to use in a load-balancer health
-check.
+Point the balancer at `/minio/health/cluster` to drain a node that has lost
+quorum, and at `/minio/health/live` for a plain liveness probe.

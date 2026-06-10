@@ -6,6 +6,7 @@ weight: 40
 featured: true
 ---
 
-liteio implements the full AWS IAM security model: SigV4 authentication, PBAC
-policy evaluation, STS temporary credentials, federated identity via OIDC,
-LDAP, and certificates, and per-object encryption with SSE-C.
+liteio implements the AWS security model end to end: SigV4 on every request,
+IAM policy evaluation with deny-by-default, STS for short-lived credentials,
+federated login through OIDC, LDAP, or client certificates, and per-object
+encryption with customer-held keys.

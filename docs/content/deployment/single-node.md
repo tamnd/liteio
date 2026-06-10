@@ -4,14 +4,15 @@ description: "Run liteio on one server with local drives."
 weight: 10
 ---
 
-A single-node deployment is the simplest production configuration. All drives
-are local, there is no inter-node RPC, and the cluster-address flag is omitted.
+A single node is the simplest production setup. Every drive is local, there is
+no inter-node RPC, and you leave the cluster flags off entirely. This is the
+right choice until you need to survive a whole machine going down.
 
-## Choose drives
+## Pick the drives
 
-Give liteio at least two directories, one per physical drive. Using one
-directory per physical disk lets liteio detect and recover from individual drive
-failures.
+Give liteio one directory per physical drive. Mapping directories to real disks
+is what lets it detect and heal a single failed drive instead of losing
+everything when one disk dies.
 
 ```
 /mnt/drive1
@@ -20,13 +21,14 @@ failures.
 /mnt/drive4
 ```
 
-More drives improve both performance (parallel I/O) and durability (more shards
-to lose before data is unrecoverable). The minimum parity level is 1 (1 parity
-shard for N-1 data shards). The default is N/2 — the most durable split.
+More drives buys you two things at once: parallel I/O for throughput, and more
+shards to lose before data is gone. Parity defaults to half the drives, the most
+durable split. Drop it with `--parity` if you would rather spend the space on
+capacity.
 
-## Run liteio
+## Run it
 
-A minimal production invocation with four drives and TLS:
+A production invocation with TLS terminated in liteio itself:
 
 ```bash
 liteio \
@@ -43,11 +45,12 @@ liteio \
   --metrics-token scrape-token
 ```
 
-liteio formats the drives on first run and writes a `format.json` manifest to
-each drive. Subsequent runs read the manifest and validate that the drive set is
-consistent.
+On first run, liteio formats the drives and writes a `format.json` manifest to
+each. On later runs it reads those manifests and refuses to start if the drive
+set has drifted, which catches a mis-mounted disk before it becomes a data
+problem.
 
-## Systemd unit
+## Run it under systemd
 
 ```ini
 [Unit]
@@ -73,10 +76,15 @@ WantedBy=multi-user.target
 systemctl enable --now liteio
 ```
 
-## Reverse proxy
+The high `LimitNOFILE` matters: liteio holds a file handle per open drive shard,
+and the default 1024 runs out under load.
 
-liteio speaks plain HTTP on the data path. To terminate TLS at a reverse proxy
-instead of in liteio itself, point nginx or Caddy at `:9000`:
+## Put it behind a reverse proxy
+
+If you would rather terminate TLS at nginx or Caddy, bind liteio to loopback and
+proxy to it. Two settings are non-negotiable: turn buffering off so streaming
+uploads are not spooled to disk, and remove the body size cap so large objects
+go through.
 
 ```nginx
 server {
@@ -95,13 +103,12 @@ server {
 }
 ```
 
-With a reverse proxy handling TLS, omit the `--tls-cert` / `--tls-key` flags
-from liteio and bind it on a loopback address.
+With the proxy handling TLS, drop liteio's `--tls-cert` and `--tls-key`.
 
-## Prometheus scraping
+## Scrape it with Prometheus
 
-Add a scrape target to your Prometheus config. The token must match
-`--metrics-token`:
+The token below must match `--metrics-token`. With no token configured, the
+endpoint is not served, so this is opt-in.
 
 ```yaml
 scrape_configs:
@@ -112,5 +119,4 @@ scrape_configs:
     metrics_path: /metrics
 ```
 
-Metrics include per-API request counts, error counts by S3 code, latency
-histograms, drive health, erasure set availability, and heap / GC stats.
+See [Metrics](/operations/metrics/) for the full catalog.
