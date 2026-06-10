@@ -50,7 +50,7 @@ func Open(dir string) (*Index, error) {
 		return nil, fmt.Errorf("index: mkdir %s: %w", dir, err)
 	}
 	db, err := bolt.Open(filepath.Join(dir, "index.db"), 0o600, &bolt.Options{
-		Timeout:    2 * time.Second,
+		Timeout:      2 * time.Second,
 		FreelistType: bolt.FreelistArrayType,
 	})
 	if err != nil {
