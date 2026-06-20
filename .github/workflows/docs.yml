@@ -26,13 +26,13 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.0
         with:
           submodules: true
           fetch-depth: 0
 
       - name: Checkout tago
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v7.0.0
         with:
           repository: tamnd/tago
           path: .tago-src
@@ -95,7 +95,7 @@ jobs:
       group: cloudflare-pages-liteio
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.0
         with:
           fetch-depth: 1
           sparse-checkout: scripts/
